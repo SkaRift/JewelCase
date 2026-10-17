@@ -15,6 +15,8 @@ SkaRift.
 - A details screen for each game.
 - Settings: rescan games, create system folders, cover downloads, background music (your
   MP3s), rain effect, and more.
+- Everything it saves (recent games, favorites, settings, covers, music) is kept in
+  /data/jewelcase, so updates never touch it.
 
 ## Install
 
