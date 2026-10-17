@@ -1,0 +1,49 @@
+# ps5-native-app-boilerplate - Generated and local-only file exclusions.
+# Copyright (C) 2026 BlackBearReloaded
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+.local/
+.deps/
+.env
+__pycache__/
+*.pyc
+build/
+dist/
+**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+*.log
+*.elf
+*.self
+*.sprx
+*.prx
+*.pkg
+
+# Jewel Case
+!runtime/libc.prx
+build-host/
+release/
+*.zip
+# never commit games, BIOS files, music or downloaded covers
+*.mp3
+*.iso
+*.chd
+*.cue
+*.bin
+*.sfc
+*.smc
+*.z64
+*.n64
+*.gba
+*.gb
+*.gbc
+*.nds
+*.3ds
+*.nsp
+*.xci
+recent.json
+favorites.json
+ui-settings.json
