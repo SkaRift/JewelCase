@@ -45,3 +45,14 @@ host:
 	cc -O1 -g -Wall -Wno-unused-function -DGS_HOST -Iinclude -Isrc/gs $(HOST_SDL_CFLAGS) \
 	    -o build-host/jewelcase src/gs/main.c src/gs/cJSON.c src/gs/alloc.c src/gs/music.c \
 	    $(HOST_SDL_LIBS) -lm -lpthread -ldl
+
+# Release zip in the PS5 homebrew catalog layout: the PPSA75837/ folder at the top,
+# with the user README and the license inside it.
+.PHONY: release
+release: app
+	rm -rf release && mkdir -p release
+	cp -r dist/PPSA75837 release/PPSA75837
+	cp docs/release-readme.txt release/PPSA75837/README.txt
+	cp LICENSE release/PPSA75837/LICENSE.txt
+	cd release && zip -qr PPSA75837.zip PPSA75837
+	sha256sum release/PPSA75837.zip

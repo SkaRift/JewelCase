@@ -106,6 +106,9 @@ static char g_appdir[512] = "/app0";
 #else
 static char g_appdir[512] = "/data/homebrew/JewelCase";
 #endif
+/* what Jewel Case saves (recent, favorites, settings) lives outside the app
+ * folder, so installing an update never touches it */
+#define USER_DIR "/data/jewelcase"
 
 static void logf_(const char *fmt, ...) {
     va_list ap;
@@ -750,7 +753,14 @@ static void json_strlist(cJSON *arr, char (*dst)[48], int *n) {
 
 static void load_config(char *err, size_t errcap) {
     char path[600];
-    snprintf(path, sizeof(path), "%s/jewelcase.json", g_appdir);
+    snprintf(path, sizeof(path), "%s", USER_DIR "/jewelcase.json");
+    {
+        char rp[1300];
+        real_path(path, rp, sizeof(rp));
+        FILE *t = fopen(rp, "rb");
+        if (t) fclose(t);
+        else snprintf(path, sizeof(path), "%s/jewelcase.json", g_appdir);
+    }
     size_t len = 0;
     char *txt = read_file(path, &len);
     g_nroots = 0;
@@ -1344,7 +1354,7 @@ static void scan_system(System *s) {
 
 static void load_recent(void) {
     char path[600];
-    snprintf(path, sizeof(path), "%s/recent.json", g_appdir);
+    snprintf(path, sizeof(path), "%s", USER_DIR "/recent.json");
     char *txt = read_file(path, NULL);
     g_nrecent = 0;
     if (!txt) return;
@@ -1386,7 +1396,7 @@ static void save_recent(const char *played) {
     }
     char *out = cJSON_Print(arr);
     char path[600];
-    snprintf(path, sizeof(path), "%s/recent.json", g_appdir);
+    snprintf(path, sizeof(path), "%s", USER_DIR "/recent.json");
     if (out) {
         write_file(path, out);
         free(out);
@@ -1408,7 +1418,7 @@ static void load_favs(void) {
     if (!g_favs) g_favs = calloc(MAX_FAVS, 1024);
     if (!g_favs) return;
     char path[600];
-    snprintf(path, sizeof(path), "%s/favorites.json", g_appdir);
+    snprintf(path, sizeof(path), "%s", USER_DIR "/favorites.json");
     char *txt = read_file(path, NULL);
     g_nfavs = 0;
     if (!txt) return;
@@ -1439,7 +1449,7 @@ static int toggle_fav(const char *path) {
     for (int i = 0; i < g_nfavs; i++) cJSON_AddItemToArray(arr, cJSON_CreateString(g_favs[i]));
     char *out = cJSON_Print(arr);
     char p[600];
-    snprintf(p, sizeof(p), "%s/favorites.json", g_appdir);
+    snprintf(p, sizeof(p), "%s", USER_DIR "/favorites.json");
     if (out) {
         write_file(p, out);
         free(out);
@@ -3707,7 +3717,7 @@ enum { SET_RESCAN, SET_FOLDERS, SET_MISSING, SET_REDOWNLOAD, SET_AUTO, SET_MUSIC
 
 static void save_ui_settings(void) {
     char path[600], out[400];
-    snprintf(path, sizeof(path), "%s/ui-settings.json", g_appdir);
+    snprintf(path, sizeof(path), "%s", USER_DIR "/ui-settings.json");
     snprintf(out, sizeof(out),
              "{\n  \"showEmptySystems\": %s,\n  \"autoCovers\": %s,\n  \"music\": %s,\n"
              "  \"musicVolume\": %d,\n  \"rain\": %s\n}\n",
@@ -3718,7 +3728,7 @@ static void save_ui_settings(void) {
 
 static void load_ui_settings(void) {
     char path[600];
-    snprintf(path, sizeof(path), "%s/ui-settings.json", g_appdir);
+    snprintf(path, sizeof(path), "%s", USER_DIR "/ui-settings.json");
     char *txt = read_file(path, NULL);
     if (!txt) return;
     cJSON *o = cJSON_Parse(txt);
@@ -4056,7 +4066,7 @@ static void settings_activate(void) {
         break;
     case SET_CLEAR_RECENT: {
         char path[600];
-        snprintf(path, sizeof(path), "%s/recent.json", g_appdir);
+        snprintf(path, sizeof(path), "%s", USER_DIR "/recent.json");
         write_file(path, "[]\n");
         g_nrecent = 0;
         rebuild_tabs();
@@ -4516,6 +4526,19 @@ int main(int argc, char **argv) {
         for (int i = 0; i < 3; i++) {
             real_path(dirs[i], rp, sizeof(rp));
             mkdir(rp, 0777);
+        }
+        /* earlier builds saved these in the app folder: carry them over once */
+        const char *saved[] = {"recent.json", "favorites.json", "ui-settings.json"};
+        for (int i = 0; i < 3; i++) {
+            char to[700], from[700];
+            snprintf(to, sizeof(to), USER_DIR "/%s", saved[i]);
+            snprintf(from, sizeof(from), "%s/%s", g_appdir, saved[i]);
+            if (file_exists(to)) continue;
+            char *old = read_file(from, NULL);
+            if (old) {
+                write_file(to, old);
+                free(old);
+            }
         }
         const char *note = "/data/jewelcase/music/_Put your MP3s here.txt";
         if (!file_exists(note))

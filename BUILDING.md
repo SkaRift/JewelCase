@@ -18,8 +18,12 @@ make
 ```
 
 This builds the three helpers, then compiles, links and signs the app into
-`dist/PPSA75837`, which you copy to the console. `dist/PPSA75837.zip` is the same folder,
-zipped.
+`dist/PPSA75837`, which you copy to the console.
+
+`make release` also writes `release/PPSA75837.zip`, the zip for a GitHub release. It has the
+`PPSA75837/` folder at the top, as the PS5 homebrew catalog expects, with `README.txt`
+(from `docs/release-readme.txt`) and `LICENSE.txt` inside it. Raise `contentVersion` in
+`sce_sys/param.json` and `GS_VERSION` in `src/gs/main.c` before each release.
 
 Build settings (include paths, defines, SDL2, which helper files go into the app folder) are
 in `jewelcase.mk`. A local `.env` (see `.env.example`) can override any of them, and also

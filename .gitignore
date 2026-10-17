@@ -47,3 +47,4 @@ release/
 recent.json
 favorites.json
 ui-settings.json
+.deps

@@ -59,8 +59,8 @@
 
 ## Install
 
-1. Download `JewelCase-v1.0.zip` from [Releases](../../releases).
-2. Copy the `PPSA75837` folder to your PS5, for example to `/data/homebrew/PPSA75837`.
+1. Download `PPSA75837.zip` from [Releases](../../releases).
+2. Extract it and copy the `PPSA75837` folder to `/data/homebrew/` on your PS5.
 3. Install it with ShadowMountPlus, then start **Jewel Case** from the home screen.
 
 To update, overwrite the files in the same folder.

@@ -18,12 +18,12 @@ SkaRift.
 
 ## Install
 
-1. Download `JewelCase-v1.0.zip` below.
-2. Copy `PPSA75837` to your PS5, for example `/data/homebrew/PPSA75837`.
+1. Download `PPSA75837.zip` below.
+2. Extract it and copy the `PPSA75837` folder to `/data/homebrew/` on your PS5.
 3. Install it with ShadowMountPlus and start Jewel Case from the home screen.
 
 Needs etaHEN running (Jewel Case uses its ELF loader on port 9021). Tested on firmware 13.42.
-See `README.txt` in the zip for folders, controls and troubleshooting.
+See `README.txt` in the app folder for folders, controls and troubleshooting.
 
 ## Known limitations
 
