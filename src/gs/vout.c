@@ -6,11 +6,18 @@
  * flushed before each flip. Jewel Case draws with SDL into a normal linear
  * image; gs_vout_present converts it into the tiled buffer that isn't shown,
  * then flips to it.
+ *
+ * The converting, flushing and waiting for the flip happen on a thread of their
+ * own: gs_vout_present only copies the frame and returns, so the next frame is
+ * drawn while this one goes on screen (done one after the other, the two didn't
+ * fit in one 60 Hz refresh, and the app ran at 30 frames a second).
  */
 #ifdef GS_NATIVE
 
+#include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define FRAME_W 1920
@@ -58,12 +65,22 @@ static int64_t g_frame_no = 1;
 static uint32_t g_xpart[FRAME_W], g_xblock[FRAME_W];
 static uint32_t g_ypart[FRAME_H], g_yblock[FRAME_H];
 
+/* the frame handed to the flip thread */
+static uint32_t *g_stage;
+static pthread_t g_thread;
+static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_cv = PTHREAD_COND_INITIALIZER;
+static int g_pending;           /* a frame waiting for (or being put on) the screen */
+static int g_threaded;
+
 static void flush_range(void *address, size_t length) {
     uint8_t *at = (uint8_t *)address;
     const uint8_t *end = at + length;
     for (; at < end; at += 64) __asm__ volatile("clflush (%0)" : : "r"(at) : "memory");
     __asm__ volatile("mfence" ::: "memory");
 }
+
+static void *flip_thread(void *arg);
 
 /* Returns 0, or a short reason. */
 const char *gs_vout_init(void) {
@@ -105,11 +122,14 @@ const char *gs_vout_init(void) {
         return "video buffer registration failed";
     if (sceVideoOutSubmitFlip(g_video, 0, 1, 1) < 0) return "first flip failed";
     sceVideoOutWaitVblank(g_video);
+    /* the flip thread; without it frames are put on screen in line, as before */
+    g_stage = malloc((size_t)FRAME_W * 4 * FRAME_H);
+    if (g_stage && pthread_create(&g_thread, NULL, flip_thread, NULL) == 0) g_threaded = 1;
     return 0;
 }
 
 /* pixels: 1920x1080, 32-bit words laid out 0xAABBGGRR (SDL's ABGR8888). */
-void gs_vout_present(const void *pixels, int pitch) {
+static void flip_frame(const void *pixels, int pitch) {
     if (g_video < 0) return;
     g_frame_no++;
     int back = (int)(g_frame_no & 1);
@@ -128,6 +148,39 @@ void gs_vout_present(const void *pixels, int pitch) {
         sceVideoOutSubmitFlip(g_video, back, 1, g_frame_no);
     }
     sceVideoOutWaitVblank(g_video);
+}
+
+static void *flip_thread(void *arg) {
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&g_mu);
+        while (!g_pending) pthread_cond_wait(&g_cv, &g_mu);
+        pthread_mutex_unlock(&g_mu);
+        flip_frame(g_stage, FRAME_W * 4);
+        pthread_mutex_lock(&g_mu);
+        g_pending = 0;
+        pthread_cond_broadcast(&g_cv);
+        pthread_mutex_unlock(&g_mu);
+    }
+    return NULL;
+}
+
+void gs_vout_present(const void *pixels, int pitch) {
+    if (g_video < 0) return;
+    if (!g_threaded) {
+        flip_frame(pixels, pitch);
+        return;
+    }
+    /* wait for the last frame to be on screen, hand this one over, and go on */
+    pthread_mutex_lock(&g_mu);
+    while (g_pending) pthread_cond_wait(&g_cv, &g_mu);
+    const uint8_t *src = (const uint8_t *)pixels;
+    if (pitch == FRAME_W * 4) memcpy(g_stage, src, (size_t)FRAME_W * 4 * FRAME_H);
+    else
+        for (int y = 0; y < FRAME_H; y++) memcpy(g_stage + (size_t)y * FRAME_W, src + (size_t)y * pitch, FRAME_W * 4);
+    g_pending = 1;
+    pthread_cond_broadcast(&g_cv);
+    pthread_mutex_unlock(&g_mu);
 }
 
 #endif
