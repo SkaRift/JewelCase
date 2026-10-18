@@ -10,9 +10,11 @@
  *   G<TAB>repo<TAB>output path without extension<TAB>ROM file name without extension
  *   L<TAB>repo<TAB>output path without extension<TAB>ROM file name without extension
  *   T<TAB>-<TAB>output path without extension<TAB>disc image path
+ *   D<TAB>LaunchBox platform<TAB>output path without extension<TAB>ROM name[<TAB>disc image path]
  * G is the box art (Named_Boxarts), L the game's title logo (Named_Logos), T a
  * disc scan from GameTDB (art.gametdb.com) for GameCube and Wii games, found by
- * the game ID in the disc image's header.
+ * the game ID in the disc image's header. D a disc scan from the LaunchBox
+ * Games Database (jc-lbdb.c), then from GameTDB when a disc image path is given.
  *
  * For each line: <output>.png when found, <output>.none when not (so it isn't
  * looked for again). Progress: /data/jewelcase/covers/status.txt
@@ -97,6 +99,7 @@ static int http_get(const char *url, sink_fn sink, void *ctx) {
     if(fscanf(p, "%d", &st) != 1) st = -1;
     pclose(p);
   }
+  if(st == 0 && !strncmp(url, "file://", 7)) st = access(url + 7, R_OK) == 0 ? 200 : 404;   /* local tests */
   if(st == 200) {
     FILE *f = fopen(tmp, "rb");
     char buf[CHUNK];
@@ -723,14 +726,27 @@ static int find_disc_scan(const char *disc, const char *out) {
   return unreachable ? -2 : -1;
 }
 
+#include "jc-lbdb.c"
+
 /* ------------------------------------------------------------------------ */
 
 typedef struct {
-  char type;            /* G box art, L logo, T disc scan */
-  char repo[128];
+  char type;            /* G box art, L logo, T GameTDB disc scan, D LaunchBox disc scan */
+  char repo[128];       /* D: the LaunchBox platform */
   char out[900];
   char rom[600];
+  char disc[600];       /* D: the disc image, for GameTDB after LaunchBox */
 } Job;
+
+static int pending(const char *out) {
+  char p[1000];
+  static const char *ext[] = {"png", "jpg", "none"};
+  for(int i = 0; i < 3; i++) {
+    snprintf(p, sizeof p, "%s.%s", out, ext[i]);
+    if(exists(p)) return 0;
+  }
+  return 1;
+}
 
 int main(void) {
   mkdirs(COVER_DIR);
@@ -774,7 +790,7 @@ int main(void) {
   while(jobs && fgets(line, sizeof line, f)) {
     size_t l = strlen(line);
     while(l && (line[l - 1] == '\n' || line[l - 1] == '\r')) line[--l] = 0;
-    if((line[0] != 'G' && line[0] != 'L' && line[0] != 'T') || line[1] != '\t') continue;
+    if((line[0] != 'G' && line[0] != 'L' && line[0] != 'T' && line[0] != 'D') || line[1] != '\t') continue;
     char *a = line + 2, *b = strchr(a, '\t'), *c = b ? strchr(b + 1, '\t') : NULL;
     if(!b || !c) continue;
     *b++ = 0;
@@ -788,7 +804,10 @@ int main(void) {
     jobs[n].type = line[0];
     snprintf(jobs[n].repo, sizeof jobs[n].repo, "%s", a);
     snprintf(jobs[n].out, sizeof jobs[n].out, "%s", b);
+    char *e = strchr(c, '\t');
+    if(e) *e++ = 0;
     snprintf(jobs[n].rom, sizeof jobs[n].rom, "%s", c);
+    snprintf(jobs[n].disc, sizeof jobs[n].disc, "%s", e ? e : "");
     n++;
   }
   fclose(f);
@@ -804,6 +823,18 @@ int main(void) {
     return 1;
   }
 
+  /* LaunchBox: its index first, if any disc still needs looking for */
+  char want[LB_MAXPLAT][48];
+  int nwant = 0, need_lb = 0;
+  for(int i = 0; i < n; i++) {
+    if(jobs[i].type != 'D' || !pending(jobs[i].out)) continue;
+    need_lb = 1;
+    int seen = 0;
+    for(int k = 0; k < nwant; k++) if(plat_eq(want[k], jobs[i].repo)) seen = 1;
+    if(!seen && nwant < LB_MAXPLAT) snprintf(want[nwant++], sizeof want[0], "%s", jobs[i].repo);
+  }
+  if(need_lb && lb_ready(want, nwant) != 0) logl("launchbox: no index, discs fall back to GameTDB / the printed design");
+
   int found = 0, tried = 0;
   for(int i = 0; i < n; i++) {
     status("running %d %d %ld", i, n, (long)time(NULL));
@@ -817,7 +848,15 @@ int main(void) {
     parent_dirs(p);
     tried++;
     int r;
-    if(jobs[i].type == 'T') r = find_disc_scan(jobs[i].rom, jobs[i].out);
+    if(jobs[i].type == 'T') {
+      r = find_disc_scan(jobs[i].rom, jobs[i].out);
+    } else if(jobs[i].type == 'D') {
+      r = find_lb_disc(jobs[i].repo, jobs[i].rom, jobs[i].out);
+      if(r != 0 && jobs[i].disc[0]) {
+        int r2 = find_disc_scan(jobs[i].disc, jobs[i].out);
+        r = r2 == 0 ? 0 : (r == -2 || r2 == -2) ? -2 : -1;
+      }
+    }
     else r = find_cover(jobs[i].repo, jobs[i].type == 'L' ? "Named_Logos" : "Named_Boxarts", jobs[i].rom, jobs[i].out);
     if(r == 0) {
       if(jobs[i].type == 'G') found++;

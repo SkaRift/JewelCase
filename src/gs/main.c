@@ -2131,8 +2131,27 @@ static const BoxCrop *box_crop_of(const System *s) {
 }
 
 /* systems GameTDB has disc scans for, found by the game ID in the disc image */
-static int has_disc_scans(const System *s) {
+static int has_gametdb(const System *s) {
     return !strcmp(s->id, "gc") || !strcmp(s->id, "wii");
+}
+
+/* each disc system's platform name in the LaunchBox Games Database, which has disc scans */
+static const char *launchbox_platform(const System *s) {
+    static const char *const map[][2] = {
+        {"psx", "Sony Playstation"},       {"ps2", "Sony Playstation 2"},     {"ps3", "Sony Playstation 3"},
+        {"gc", "Nintendo GameCube"},       {"wii", "Nintendo Wii"},           {"wiiu", "Nintendo Wii U"},
+        {"dc", "Sega Dreamcast"},          {"saturn", "Sega Saturn"},         {"segacd", "Sega CD"},
+        {"xbox", "Microsoft Xbox"},        {"xbox360", "Microsoft Xbox 360"}, {"pcfx", "NEC PC-FX"},
+        {"3do", "3DO Interactive Multiplayer"}, {"neocd", "SNK Neo Geo CD"},
+    };
+    for (size_t i = 0; i < sizeof(map) / sizeof(*map); i++)
+        if (!strcmp(map[i][0], s->id)) return map[i][1];
+    return NULL;
+}
+
+/* a disc scan can be downloaded for this system */
+static int has_disc_scans(const System *s) {
+    return has_gametdb(s) || launchbox_platform(s);
 }
 
 /* The black band some systems print across the bottom of their discs, with
@@ -2400,6 +2419,8 @@ static int extra_of(Game *g, int kind, char *out, size_t cap) {
     extra_base(g, kind, base, sizeof(base));
     snprintf(out, cap, "%s.png", base);
     if (file_exists(out)) return 1;
+    snprintf(out, cap, "%s.jpg", base);
+    if (file_exists(out)) return 1;
     char none[1200];
     snprintf(none, sizeof(none), "%s.none", base);
     return file_exists(none) ? -1 : 0;
@@ -2446,7 +2467,8 @@ static void poll_art_status(void) {
         g_art_running = 1;
         g_art_done = a;
         g_art_total = b;
-        snprintf(g_art_status, sizeof(g_art_status), "downloading, %d of %d checked", a, b);
+        if (b == 0) scopy(g_art_status, sizeof(g_art_status), "downloading the LaunchBox disc database");
+        else snprintf(g_art_status, sizeof(g_art_status), "downloading, %d of %d checked", a, b);
     } else {
         g_art_running = 0;
         if (!strcmp(word, "done")) snprintf(g_art_status, sizeof(g_art_status), "%d downloaded last run (%d games)", a, b);
@@ -2480,9 +2502,15 @@ static void start_cover_helper(void) {
             if (wants_extras(g)) {
                 extra_base(g, 0, base, sizeof(base));
                 n += snprintf(line + n, sizeof(line) - n, "L\t%s\t%s\t%s\n", l->repo, base, g->stem);
-                if (has_disc_scans(&g_sys[s]) && n < (int)sizeof(line)) {
+                /* the disc: LaunchBox, then GameTDB for GameCube / Wii */
+                const char *lbp = launchbox_platform(&g_sys[s]);
+                if (n < (int)sizeof(line)) {
                     extra_base(g, 1, base, sizeof(base));
-                    n += snprintf(line + n, sizeof(line) - n, "T\t-\t%s\t%s\n", base, g->path);
+                    if (lbp)
+                        n += snprintf(line + n, sizeof(line) - n, "D\t%s\t%s\t%s\t%s\n", lbp, base, g->stem,
+                                      has_gametdb(&g_sys[s]) ? g->path : "");
+                    else if (has_gametdb(&g_sys[s]))
+                        n += snprintf(line + n, sizeof(line) - n, "T\t-\t%s\t%s\n", base, g->path);
                 }
             }
             if (!g->art[0] && n < (int)sizeof(line)) {
@@ -4077,6 +4105,8 @@ static int reset_covers(int all) {
                     if (all) {
                         snprintf(p, sizeof(p), "%s.png", base);
                         remove_file(p);
+                        snprintf(p, sizeof(p), "%s.jpg", base);
+                        remove_file(p);
                     }
                 }
             if (g->art[0]) continue;
@@ -4101,6 +4131,11 @@ static int reset_covers(int all) {
                 remove_file(p);
                 snprintf(p, sizeof(p), COVER_DIR "/%s.Named_Logos.idx", l->repo);
                 remove_file(p);
+                if (nrepo == 0) {
+                    /* the LaunchBox disc index too */
+                    remove_file(COVER_DIR "/launchbox.idx");
+                    remove_file(COVER_DIR "/launchbox.fail");
+                }
                 scopy(done_repo[nrepo++], 128, l->repo);
             }
         }

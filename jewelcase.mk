@@ -24,7 +24,7 @@ helper/jc-launch.elf: helper/jc-launch.c
 	$(PAYLOAD_CC) $(PAYLOAD_CFLAGS) -o $@ $< -lSceSystemService -lSceUserService
 helper/jc-scan.elf: helper/jc-scan.c
 	$(PAYLOAD_CC) $(PAYLOAD_CFLAGS) -o $@ $<
-helper/jc-art.elf: helper/jc-art.c
+helper/jc-art.elf: helper/jc-art.c helper/jc-lbdb.c
 	$(PAYLOAD_CC) $(PAYLOAD_CFLAGS) -o $@ $< -lSceNet -lSceSsl -lSceHttp2
 
 .PHONY: helpers media host

@@ -98,9 +98,10 @@ Hinnant's public-domain `civil_from_days` algorithm.
 
 `third_party/miniz/` holds [miniz](https://github.com/richgel999/miniz) 3.0.2
 (commit `293d4db1b7d0ffee9756d035b9ac6f7431ef8492`), MIT, unmodified, with its
-`LICENSE`; `SOURCE.json` records each file's SHA-256. Only the self-update
-helper (`examples/self-update-helper`) and its host test link it; an
-application that ships that helper ships miniz and must carry its notice. The
+`LICENSE`; `SOURCE.json` records each file's SHA-256. Jewel Case's cover
+helper (`helper/jc-lbdb.c`, in `jc-art.elf`) uses its inflate code to unpack the
+LaunchBox database, so Jewel Case ships miniz and carries its notice here. The
+self-update helper (`examples/self-update-helper`) and its host test also link it. The
 helper's archive validation and file helpers are original BlackBearReloaded
 code (GPL-3.0-or-later), taken from the ProsperoStore project.
 
@@ -138,6 +139,7 @@ Jewel Case (by SkaRift) is built on this boilerplate and adds these components:
 | [Poppins](https://fonts.google.com/specimen/Poppins) | SIL Open Font License 1.1 | embedded in `src/gs/fonts.h` |
 | Launch logic after [ps5-payload-websrv](https://github.com/ps5-payload-dev/websrv) | GPL-3.0 | `helper/jc-launch.c` |
 | HTTP sample from the [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk) | GPL-3.0 | `helper/jc-art.c` |
+| [miniz](https://github.com/richgel999/miniz) 3.0.2 (inflate, from `third_party/miniz/`) | MIT | `helper/jc-lbdb.c` (in `jc-art.elf`) |
 
 The cartridge, card and disc artwork contains no console makers' logos: it is drawn by
 `tools/make_media.py`, or rendered from the models below with their logos removed.
@@ -161,5 +163,6 @@ See assets/media/CREDITS.md.
 ## Downloaded art
 
 Jewel Case includes no game art. On the console it downloads box art and title logos from
-the libretro-thumbnails project (https://github.com/libretro-thumbnails) and GameCube / Wii
-disc scans from GameTDB (https://www.gametdb.com). That art belongs to its owners.
+the libretro-thumbnails project (https://github.com/libretro-thumbnails), disc scans from the
+LaunchBox Games Database (https://gamesdb.launchbox-app.com) and GameCube / Wii disc scans
+from GameTDB (https://www.gametdb.com). That art belongs to its owners.

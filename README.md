@@ -32,9 +32,10 @@
 - **Labels, not boxes.** Cartridge labels show the box art without the box's system banner
   and ratings. Discs are printed edge to edge with the art and the game's title logo, inside a silver
   rim around a clear hub, with the system's band on PS1, PS2 and GameCube discs (GameCube
-  discs are the smaller 8 cm size), and
-  GameCube and Wii games get a scan of their real disc from [GameTDB](https://www.gametdb.com),
-  found by the game ID in the disc image.
+  discs are the smaller 8 cm size). When there's a scan of the real disc, that's used
+  instead: from the [LaunchBox Games Database](https://gamesdb.launchbox-app.com) for every
+  disc system, and from [GameTDB](https://www.gametdb.com) for GameCube and Wii, found by the
+  game ID in the disc image.
 - **Standalone emulators first.** Jewel Case starts each game in a dedicated PS5 emulator
   app when you have one installed, and falls back to RetroArch with a matching core.
 - **Details screen** for each game: its emulator, when you last played it, the file, its
@@ -130,7 +131,8 @@ and the [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk), with SDL2, cJ
 dr_mp3 and the Poppins font. The cartridges, cards and discs are rendered from CC BY 4.0 models by
 Steven-Bennis, HippoStance, Karolina D, Vxcl, Pcwer, crocoman2019 and enjoyboy
 ([credits](assets/media/CREDITS.md)). Box art and logos come from
-[libretro-thumbnails](https://github.com/libretro-thumbnails), GameCube and Wii disc scans from
+[libretro-thumbnails](https://github.com/libretro-thumbnails), disc scans from the
+[LaunchBox Games Database](https://gamesdb.launchbox-app.com) and
 [GameTDB](https://www.gametdb.com). Thanks to the etaHEN and
 ShadowMountPlus developers and to the authors of every emulator listed above. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

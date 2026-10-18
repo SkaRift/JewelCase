@@ -68,9 +68,12 @@ Cartridge labels show the box art without the box's system banner and
 ratings. Discs show the art edge to edge, with a silver rim, a clear hub and, on
 PS1, PS2 and GameCube discs, the system's band. Each has the game's title logo (also
 from libretro-thumbnails, in /data/jewelcase/covers/<system>/logos).
-GameCube and Wii discs use a scan of the real disc from GameTDB
-(art.gametdb.com) when there is one, found by the game ID inside the disc
-image (ISO, GCM, WBFS, CISO and RVZ files; not GCZ).
+Discs use a scan of the real disc when there is one: from the LaunchBox
+Games Database for every disc system, then, for GameCube and Wii, from
+GameTDB (art.gametdb.com), found by the game ID inside the disc image
+(ISO, GCM, WBFS, CISO and RVZ files; not GCZ). The first time, Jewel Case
+downloads LaunchBox's whole database file (over 100 MB) once to find the
+discs; this takes a while. Redownload all covers fetches it again.
 Your own disc image for any disc system: put a .png or .jpg in a "discs"
 folder next to the game, named like the game file, or name it
 "<game>-disc.png" next to the game. It is used when no disc scan was
@@ -150,7 +153,10 @@ Built with and thanks to:
   stb_image_write (public domain), dr_mp3 (public domain / MIT-0),
   Poppins font (SIL Open Font License)
   Box art and logos: the libretro-thumbnails project
-  GameCube and Wii disc scans: GameTDB (gametdb.com)
+  Disc scans: the LaunchBox Games Database (gamesdb.launchbox-app.com)
+  and GameTDB (gametdb.com)
+  miniz (MIT, (c) Rich Geldreich, RAD Game Tools, Valve), to unpack
+  the LaunchBox database
   Cartridge, card and disc renders: 3D models by Steven-Bennis (SNES),
   HippoStance (NES), Karolina D (Game Boy), Vxcl (GBA), Pcwer (DS),
   crocoman2019 (Switch) and enjoyboy (disc), CC BY 4.0, changed for
