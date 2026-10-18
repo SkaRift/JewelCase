@@ -5120,7 +5120,7 @@ static void settings_activate(void) {
                    "  N64: ejpman (CC BY-NC 4.0, Printables)   Disc: enjoyboy (CD Jewel Case, Blend Swap)\n\n"
                    "Art, downloaded on your console:\n"
                    "  Box art, logos and screenshots: the libretro-thumbnails project\n"
-                   "  Game info and disc scans: the LaunchBox Games Database; disc scans: GameTDB\n\n"
+                   "  Game info, box art and disc scans: the LaunchBox Games Database; disc scans: GameTDB\n\n"
                    "Code: ps5-native-app-boilerplate (BlackBearReloaded), the PS5 payload SDK and\n"
                    "  ps5-payload-websrv (John Tornblom), SDL2, cJSON, stb, dr_mp3, miniz, Poppins font.\n"
                    "Thanks to the etaHEN and ShadowMountPlus developers and every emulator's authors.\n\n"
