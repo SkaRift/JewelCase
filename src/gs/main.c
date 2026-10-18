@@ -1862,6 +1862,47 @@ static int wrap2(Font *f, const char *s, float max_w, char l1[200], char l2[200]
     return 2;
 }
 
+/* a paragraph into up to maxl lines of max_w; the last one ends in an ellipsis if
+ * there is more. Returns the number of lines. */
+static int wrap_lines(Font *f, const char *s, float max_w, char lines[][200], int maxl) {
+    int n = 0;
+    const char *p = s;
+    while (*p && n < maxl) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        const char *fit = p, *q = p;
+        for (;;) {
+            const char *e = q;
+            while (*e && *e != ' ') e++;
+            int wl = (int)(e - p);
+            if (wl >= 199) break;
+            char tmp[200];
+            memcpy(tmp, p, (size_t)wl);
+            tmp[wl] = 0;
+            if (text_width(f, tmp) > max_w) break;
+            fit = e;
+            if (!*e) break;
+            q = e + 1;
+        }
+        if (fit == p) {   /* one word longer than the line */
+            ellipsize(f, p, max_w, lines[n++], 200);
+            return n;
+        }
+        int l = (int)(fit - p);
+        memcpy(lines[n], p, (size_t)l);
+        lines[n][l] = 0;
+        n++;
+        p = fit;
+    }
+    while (*p == ' ') p++;
+    if (*p && n == maxl) {
+        char more[400];
+        snprintf(more, sizeof(more), "%s %s", lines[n - 1], p);
+        ellipsize(f, more, max_w, lines[n - 1], 200);
+    }
+    return n;
+}
+
 static void fill_rect(int x, int y, int w, int h, Uint32 rgb, Uint8 a) {
     SDL_SetRenderDrawBlendMode(R, a == 255 ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(R, (rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, a);
@@ -2137,9 +2178,19 @@ static int has_gametdb(const System *s) {
     return !strcmp(s->id, "gc") || !strcmp(s->id, "wii");
 }
 
-/* each disc system's platform name in the LaunchBox Games Database, which has disc scans */
+/* each system's platform name in the LaunchBox Games Database (game info, and disc scans) */
 static const char *launchbox_platform(const System *s) {
     static const char *const map[][2] = {
+        {"nes", "Nintendo Entertainment System"}, {"snes", "Super Nintendo Entertainment System"},
+        {"n64", "Nintendo 64"},            {"gb", "Nintendo Game Boy"},       {"gbc", "Nintendo Game Boy Color"},
+        {"gba", "Nintendo Game Boy Advance"}, {"nds", "Nintendo DS"},         {"3ds", "Nintendo 3DS"},
+        {"genesis", "Sega Genesis"},       {"sms", "Sega Master System"},     {"gg", "Sega Game Gear"},
+        {"pce", "NEC TurboGrafx-16"},      {"arcade", "Arcade"},              {"psp", "Sony PSP"},
+        {"32x", "Sega 32X"},               {"switch", "Nintendo Switch"},     {"vb", "Nintendo Virtual Boy"},
+        {"ngp", "SNK Neo Geo Pocket Color"}, {"ws", "WonderSwan Color"},      {"lynx", "Atari Lynx"},
+        {"atari2600", "Atari 2600"},       {"atari5200", "Atari 5200"},       {"atari7800", "Atari 7800"},
+        {"jaguar", "Atari Jaguar"},        {"amiga", "Commodore Amiga"},      {"c64", "Commodore 64"},
+        {"dos", "MS-DOS"},                 {"pokemini", "Nintendo Pokemon Mini"},
         {"psx", "Sony Playstation"},       {"ps2", "Sony Playstation 2"},     {"ps3", "Sony Playstation 3"},
         {"gc", "Nintendo GameCube"},       {"wii", "Nintendo Wii"},           {"wiiu", "Nintendo Wii U"},
         {"dc", "Sega Dreamcast"},          {"saturn", "Sega Saturn"},         {"segacd", "Sega CD"},
@@ -2153,7 +2204,7 @@ static const char *launchbox_platform(const System *s) {
 
 /* a disc scan can be downloaded for this system */
 static int has_disc_scans(const System *s) {
-    return has_gametdb(s) || launchbox_platform(s);
+    return has_gametdb(s) || (launchbox_platform(s) && MEDIA_TPL[tpl_of(s)].kind == 1);
 }
 
 /* The black band some systems print across the bottom of their discs, with
@@ -2415,6 +2466,12 @@ static void extra_base(Game *g, int kind, char *out, size_t cap) {
     snprintf(out, cap, COVER_DIR "/%s/%s/%s", g_sys[g->sys].id, kind ? "disc" : "logos", g->stem);
 }
 
+/* a game's details-screen extras: kind 0 its info (LaunchBox), 1 a screenshot, 2 its title screen */
+static void info_base(Game *g, int kind, char *out, size_t cap) {
+    static const char *const dir[] = {"info", "snaps", "titles"};
+    snprintf(out, cap, COVER_DIR "/%s/%s/%s", g_sys[g->sys].id, dir[kind], g->stem);
+}
+
 /* 1 = have it (path in out), -1 = looked for and not found, 0 = not looked for yet */
 static int extra_of(Game *g, int kind, char *out, size_t cap) {
     char base[1100];
@@ -2487,45 +2544,50 @@ static void poll_art_status(void) {
 static void start_cover_helper(void) {
 #if defined(GS_NATIVE) || defined(GS_HOST)
     static char *req;
-    size_t cap = 1 << 20, len = 0;
+    size_t cap = 4 << 20, len = 0;
     if (!req) req = malloc(cap);
     if (!req) return;
     len = (size_t)snprintf(req, cap, "jewelcase-art 1\n");
     int count = 0;
-    for (int s = 0; s < g_nsys; s++) {
-        const SysLook *l = look_of(&g_sys[s]);
-        if (!l || !l->repo) continue;
-        for (int k = 0; k < g_sys[s].ngames; k++) {
-            Game *g = &g_sys[s].games[k];
-            char base[1100], line[2600];
-            int n = 0;
-            /* discs first want their logo and disc scan, so those are there by the
-             * time the cover arrives and the disc is drawn */
-            if (wants_extras(g)) {
-                extra_base(g, 0, base, sizeof(base));
-                n += snprintf(line + n, sizeof(line) - n, "L\t%s\t%s\t%s\n", l->repo, base, g->stem);
-                /* the disc: LaunchBox, then GameTDB for GameCube / Wii */
-                const char *lbp = launchbox_platform(&g_sys[s]);
-                if (n < (int)sizeof(line)) {
+    /* covers first, then the discs' logos and scans, then game info and screenshots */
+    for (int pass = 0; pass < 4; pass++)
+        for (int s = 0; s < g_nsys; s++) {
+            const SysLook *l = look_of(&g_sys[s]);
+            if (!l || !l->repo) continue;
+            const char *lbp = launchbox_platform(&g_sys[s]);
+            for (int k = 0; k < g_sys[s].ngames; k++) {
+                Game *g = &g_sys[s].games[k];
+                char base[1100], line[2600];
+                int n = 0;
+                if (pass == 0 && !g->art[0]) {
+                    cover_base(g, base, sizeof(base));
+                    n += snprintf(line + n, sizeof(line) - n, "G\t%s\t%s\t%s\n", l->repo, base, g->stem);
+                } else if (pass == 1 && wants_extras(g)) {
+                    extra_base(g, 0, base, sizeof(base));
+                    n += snprintf(line + n, sizeof(line) - n, "L\t%s\t%s\t%s\n", l->repo, base, g->stem);
+                    /* the disc: LaunchBox, then GameTDB for GameCube / Wii */
                     extra_base(g, 1, base, sizeof(base));
                     if (lbp)
                         n += snprintf(line + n, sizeof(line) - n, "D\t%s\t%s\t%s\t%s\n", lbp, base, g->stem,
                                       has_gametdb(&g_sys[s]) ? g->path : "");
                     else if (has_gametdb(&g_sys[s]))
                         n += snprintf(line + n, sizeof(line) - n, "T\t-\t%s\t%s\n", base, g->path);
+                } else if (pass == 2 && lbp) {
+                    info_base(g, 0, base, sizeof(base));
+                    n += snprintf(line + n, sizeof(line) - n, "I\t%s\t%s\t%s\n", lbp, base, g->stem);
+                } else if (pass == 3) {
+                    info_base(g, 1, base, sizeof(base));
+                    n += snprintf(line + n, sizeof(line) - n, "S\t%s\t%s\t%s\n", l->repo, base, g->stem);
+                    info_base(g, 2, base, sizeof(base));
+                    n += snprintf(line + n, sizeof(line) - n, "W\t%s\t%s\t%s\n", l->repo, base, g->stem);
                 }
+                if (n <= 0) continue;
+                if (n >= (int)sizeof(line) || len + (size_t)n + 1 >= cap) break;
+                memcpy(req + len, line, (size_t)n + 1);
+                len += (size_t)n;
+                count++;
             }
-            if (!g->art[0] && n < (int)sizeof(line)) {
-                cover_base(g, base, sizeof(base));
-                n += snprintf(line + n, sizeof(line) - n, "G\t%s\t%s\t%s\n", l->repo, base, g->stem);
-            }
-            if (n <= 0) continue;
-            if (n >= (int)sizeof(line) || len + (size_t)n + 1 >= cap) break;
-            memcpy(req + len, line, (size_t)n + 1);
-            len += (size_t)n;
-            count++;
         }
-    }
     if (!count) return;
     if (write_file("/data/jewelcase-art.txt", req) != 0) {
         scopy(g_art_status, sizeof(g_art_status), "couldn't write /data/jewelcase-art.txt");
@@ -3671,6 +3733,123 @@ static void region_of(const char *stem, char *out, size_t cap) {
 static float ease(float t) { return t < 0 ? 0 : t > 1 ? 1 : 1 - (1 - t) * (1 - t) * (1 - t); }
 
 /* the game's image, big, turned slightly toward the text, standing on the floor */
+/* The details screen's extras for the game it shows: its info from LaunchBox,
+ * and its screenshot and title screen from libretro, faded in behind it. */
+typedef struct {
+    Game *g;
+    int have_info;
+    char name[160], year[8], genre[160], dev[160], pub[160], players[16];
+    char overview[1700];
+    SDL_Texture *shot[2];
+    int nshots;
+    int state;          /* which of the three files exist, to notice new ones */
+    Uint32 checked;
+} DetExtras;
+
+static DetExtras g_dx;
+
+static int det_state(Game *g) {
+    char p[1200], b[1100];
+    int st = 0;
+    for (int k = 0; k < 3; k++) {
+        info_base(g, k, b, sizeof(b));
+        static const char *const ext[3][2] = {{".txt", ".txt"}, {".png", ".jpg"}, {".png", ".jpg"}};
+        for (int e = 0; e < 2; e++) {
+            snprintf(p, sizeof(p), "%s%s", b, ext[k][e]);
+            if (file_exists(p)) {
+                st |= 1 << k;
+                break;
+            }
+        }
+    }
+    return st;
+}
+
+static void det_free(void) {
+    for (int i = 0; i < 2; i++)
+        if (g_dx.shot[i]) SDL_DestroyTexture(g_dx.shot[i]);
+    memset(&g_dx, 0, sizeof(g_dx));
+}
+
+static void det_load(Game *g) {
+    det_free();
+    g_dx.g = g;
+    g_dx.state = det_state(g);
+    g_dx.checked = SDL_GetTicks();
+    char b[1100], p[1200];
+    info_base(g, 0, b, sizeof(b));
+    snprintf(p, sizeof(p), "%s.txt", b);
+    char *txt = read_file(p, NULL);
+    if (txt) {
+        char *body = strstr(txt, "\n\n");
+        if (body) {
+            *body = 0;
+            body += 2;
+            body[strcspn(body, "\r\n")] = 0;
+            scopy(g_dx.overview, sizeof(g_dx.overview), body);
+        }
+        char *save = NULL;
+        for (char *ln = strtok_r(txt, "\n", &save); ln; ln = strtok_r(NULL, "\n", &save)) {
+            char *v = strstr(ln, ": ");
+            if (!v) continue;
+            *v = 0;
+            v += 2;
+            if (!strcmp(ln, "Name")) scopy(g_dx.name, sizeof(g_dx.name), v);
+            else if (!strcmp(ln, "Year")) scopy(g_dx.year, sizeof(g_dx.year), v);
+            else if (!strcmp(ln, "Genre")) scopy(g_dx.genre, sizeof(g_dx.genre), v);
+            else if (!strcmp(ln, "Developer")) scopy(g_dx.dev, sizeof(g_dx.dev), v);
+            else if (!strcmp(ln, "Publisher")) scopy(g_dx.pub, sizeof(g_dx.pub), v);
+            else if (!strcmp(ln, "Players")) scopy(g_dx.players, sizeof(g_dx.players), v);
+        }
+        free(txt);
+        g_dx.have_info = 1;
+    }
+    /* the title screen, then the in-game screenshot */
+    for (int k = 2; k >= 1; k--) {
+        info_base(g, k, b, sizeof(b));
+        static const char *const ext[] = {".png", ".jpg"};
+        for (int e = 0; e < 2; e++) {
+            snprintf(p, sizeof(p), "%s%s", b, ext[e]);
+            if (!file_exists(p)) continue;
+            SDL_Surface *sf = load_art_surface(p, 960, 720);
+            if (sf) {
+                SDL_Texture *tx = SDL_CreateTextureFromSurface(R, sf);
+                SDL_FreeSurface(sf);
+                if (tx) {
+                    SDL_SetTextureBlendMode(tx, SDL_BLENDMODE_BLEND);
+                    g_dx.shot[g_dx.nshots++] = tx;
+                }
+            }
+            break;
+        }
+    }
+}
+
+/* the screenshots, full screen behind everything, dimmed; one fades into the next */
+static void draw_det_backdrop(Uint8 a) {
+    if (!g_dx.nshots) return;
+    const Uint32 HOLD = 6000, FADE = 1200;
+    Uint32 now = SDL_GetTicks();
+    int cur = (int)((now / HOLD) % (Uint32)g_dx.nshots), nxt = (cur + 1) % g_dx.nshots;
+    Uint32 in = now % HOLD;
+    float f = g_dx.nshots > 1 && in > HOLD - FADE ? (float)(in - (HOLD - FADE)) / FADE : 0;
+    for (int k = 0; k < 2; k++) {
+        int i = k ? nxt : cur;
+        float al = k ? f : 1;
+        if (al <= 0 || !g_dx.shot[i]) continue;
+        int w, h;
+        SDL_QueryTexture(g_dx.shot[i], NULL, NULL, &w, &h);
+        float sc = SDL_max((float)SCREEN_W / w, (float)SCREEN_H / h);
+        SDL_Rect d = {(int)(SCREEN_W - w * sc) / 2, (int)(SCREEN_H - h * sc) / 2, (int)(w * sc), (int)(h * sc)};
+        SDL_SetTextureColorMod(g_dx.shot[i], 120, 120, 132);
+        SDL_SetTextureAlphaMod(g_dx.shot[i], (Uint8)(a * 0.42f * al));
+        SDL_RenderCopy(R, g_dx.shot[i], NULL, &d);
+    }
+    /* darker on the left, where the text is */
+    for (int x = 0; x < 1100; x += 20)
+        fill_rect(x, 0, 20, SCREEN_H, 0x06070c, (Uint8)(a * 0.55f * (1.0f - x / 1100.0f)));
+}
+
 static void draw_details_media(Game *g, Uint32 accent, float t) {
     if (!g->media) build_media(g);
     if (!g->media) return;
@@ -3722,10 +3901,17 @@ static void draw_details(Uint32 accent) {
         return;
     }
     if (g_det_game != g_sel_game) g_det_game = g_sel_game;
+    if (g_dx.g != g) det_load(g);
+    else if (SDL_GetTicks() - g_dx.checked > 2000) {
+        /* still downloading: show what arrives */
+        g_dx.checked = SDL_GetTicks();
+        if (det_state(g) != g_dx.state) det_load(g);
+    }
     float t = ease(g_det_t);
+    Uint8 a = (Uint8)(255 * SDL_min(1.0f, g_det_t * 1.6f));
+    draw_det_backdrop(a);
     draw_details_media(g, accent, t);
 
-    Uint8 a = (Uint8)(255 * SDL_min(1.0f, g_det_t * 1.6f));
     if (a < 8) return;
     System *s = &g_sys[g->sys];
     int x = 120 - (int)(40 * (1 - t)), y = 236;
@@ -3769,6 +3955,40 @@ static void draw_details(Uint32 accent) {
     }
     y = cyy + 52;
 
+    if (g_dx.have_info && (g_dx.overview[0] || g_dx.year[0] || g_dx.genre[0])) {
+        /* what the game is: year, genre, who made it, players, and its story */
+        char meta[400] = "";
+        const char *parts[4];
+        int np = 0;
+        char who[330] = "", pl[40] = "";
+        if (g_dx.dev[0] && g_dx.pub[0] && strcmp(g_dx.dev, g_dx.pub))
+            snprintf(who, sizeof(who), "%s / %s", g_dx.dev, g_dx.pub);
+        else scopy(who, sizeof(who), g_dx.dev[0] ? g_dx.dev : g_dx.pub);
+        if (g_dx.players[0] && strcmp(g_dx.players, "0"))
+            snprintf(pl, sizeof(pl), "%s player%s", g_dx.players, strcmp(g_dx.players, "1") ? "s" : "");
+        if (g_dx.year[0]) parts[np++] = g_dx.year;
+        if (g_dx.genre[0]) parts[np++] = g_dx.genre;
+        if (who[0]) parts[np++] = who;
+        if (pl[0]) parts[np++] = pl;
+        for (int i = 0; i < np; i++) {
+            if (i) strncat(meta, "  \xc2\xb7  ", sizeof(meta) - strlen(meta) - 1);
+            strncat(meta, parts[i], sizeof(meta) - strlen(meta) - 1);
+        }
+        char mline[300];
+        ellipsize(&F_chip, meta, 900, mline, sizeof(mline));
+        draw_text(&F_chip, x, y, mline, 0xc9cee0, a);
+        y += 46;
+        if (g_dx.overview[0]) {
+            char ln[6][200];
+            int n = wrap_lines(&F_small, g_dx.overview, 860, ln, 6);
+            draw_glass(x - 4, y, 900, n * (F_small.line + 4) + 28, 18, (Uint8)(a * 0.7f));
+            for (int i = 0; i < n; i++)
+                draw_text(&F_small, x + 14, y + 14 + i * (F_small.line + 4), ln[i], 0xe3e6f0, a);
+            y += n * (F_small.line + 4) + 28 + 34;
+        }
+        goto play_button;
+    }
+
     /* facts */
     char region[100], size[40] = "", cover[1200], cover_txt[120];
     region_of(g->stem, region, sizeof(region));
@@ -3799,6 +4019,7 @@ static void draw_details(Uint32 accent) {
     }
     y = fy + 34;
 
+play_button:
     /* Play button */
     int bw = 250, bh = 66;
     if (T_glow) {
@@ -3824,7 +4045,7 @@ static void draw_hints(void) {
         {'x', "Play"}, {'o', "Close"}, {'t', "Favorite"}, {'s', "Details"}};
     if (g_details) {
         hints[1].t = "Back";
-        hints[3].t = "Game info";
+        hints[3].t = "File info";
     }
     for (int i = 0; i < 4; i++) {
         draw_button(x + 17, y, hints[i].b);
@@ -4360,6 +4581,15 @@ static int reset_covers(int all) {
         for (int k = 0; k < g_sys[s].ngames; k++) {
             Game *g = &g_sys[s].games[k];
             char base[1100], p[1200];
+            for (int e = 0; e < 3; e++) {
+                char b2[1100];
+                info_base(g, e, b2, sizeof(b2));
+                static const char *const ext[] = {".none", ".txt", ".png", ".jpg"};
+                for (int k = 0; k < (all ? 4 : 1); k++) {
+                    snprintf(p, sizeof(p), "%s%s", b2, ext[k]);
+                    remove_file(p);
+                }
+            }
             if (wants_extras(g))
                 for (int e = 0; e < 2; e++) {
                     extra_base(g, e, base, sizeof(base));
@@ -4397,6 +4627,7 @@ static int reset_covers(int all) {
                 if (nrepo == 0) {
                     /* the LaunchBox disc index too */
                     remove_file(COVER_DIR "/launchbox.idx");
+                    remove_file(COVER_DIR "/launchbox-info.txt");
                     remove_file(COVER_DIR "/launchbox.fail");
                 }
                 scopy(done_repo[nrepo++], 128, l->repo);
@@ -4724,8 +4955,8 @@ static void settings_activate(void) {
                    "  DS / 3DS: Pcwer   Switch: crocoman2019   (all CC BY 4.0, on Sketchfab)\n"
                    "  N64: ejpman (CC BY-NC 4.0, Printables)   Disc: enjoyboy (CD Jewel Case, Blend Swap)\n\n"
                    "Art, downloaded on your console:\n"
-                   "  Box art and logos: the libretro-thumbnails project\n"
-                   "  Disc scans: the LaunchBox Games Database and GameTDB\n\n"
+                   "  Box art, logos and screenshots: the libretro-thumbnails project\n"
+                   "  Game info and disc scans: the LaunchBox Games Database; disc scans: GameTDB\n\n"
                    "Code: ps5-native-app-boilerplate (BlackBearReloaded), the PS5 payload SDK and\n"
                    "  ps5-payload-websrv (John Tornblom), SDL2, cJSON, stb, dr_mp3, miniz, Poppins font.\n"
                    "Thanks to the etaHEN and ShadowMountPlus developers and every emulator's authors.\n\n"

@@ -86,6 +86,15 @@ Settings: Download missing covers, Redownload all covers, and an on/off
 switch for automatic downloads.
 
 
+GAME INFO AND SCREENSHOTS
+-------------------------
+The details screen (Square) shows each game's year, genre, developer,
+players and description from the LaunchBox Games Database, and its title
+screen and an in-game screenshot (libretro-thumbnails) behind it. They
+download after the covers, into /data/jewelcase/covers/<system>/info,
+snaps and titles. Square on the details screen shows the file info.
+
+
 MUSIC
 -----
 Put MP3 files in /data/jewelcase/music. Jewel Case creates this folder
@@ -156,8 +165,8 @@ Built with and thanks to:
   SDL2 (zlib license), cJSON (MIT), stb_image / stb_truetype /
   stb_image_write (public domain), dr_mp3 (public domain / MIT-0),
   Poppins font (SIL Open Font License)
-  Box art and logos: the libretro-thumbnails project
-  Disc scans: the LaunchBox Games Database (gamesdb.launchbox-app.com)
+  Box art, logos and screenshots: the libretro-thumbnails project
+  Game info and disc scans: the LaunchBox Games Database (gamesdb.launchbox-app.com)
   and GameTDB (gametdb.com)
   miniz (MIT, (c) Rich Geldreich, RAD Game Tools, Valve), to unpack
   the LaunchBox database

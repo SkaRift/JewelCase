@@ -168,6 +168,6 @@ See assets/media/CREDITS.md.
 ## Downloaded art
 
 Jewel Case includes no game art. On the console it downloads box art and title logos from
-the libretro-thumbnails project (https://github.com/libretro-thumbnails), disc scans from the
-LaunchBox Games Database (https://gamesdb.launchbox-app.com) and GameCube / Wii disc scans
+the libretro-thumbnails project (https://github.com/libretro-thumbnails), game info and disc scans
+from the LaunchBox Games Database (https://gamesdb.launchbox-app.com) and GameCube / Wii disc scans
 from GameTDB (https://www.gametdb.com). That art belongs to its owners.

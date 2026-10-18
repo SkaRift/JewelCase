@@ -38,8 +38,10 @@
   game ID in the disc image.
 - **Standalone emulators first.** Jewel Case starts each game in a dedicated PS5 emulator
   app when you have one installed, and falls back to RetroArch with a matching core.
-- **Details screen** for each game: its emulator, when you last played it, the file, its
-  region and size, and where the cover came from.
+- **Details screen** for each game: its year, genre, developer, players and description from
+  the LaunchBox Games Database, its title screen and an in-game screenshot fading behind it
+  (from libretro-thumbnails), its emulator and when you last played it. Square shows the
+  file, region and size.
 - **Background music** (your own MP3s, shuffled) and a rain effect, both optional.
 - **Native app.** It has its own home-screen icon, installs with ShadowMountPlus, and needs no
   browser or Homebrew Launcher.

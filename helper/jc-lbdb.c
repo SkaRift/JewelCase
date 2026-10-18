@@ -1,16 +1,20 @@
-/* LaunchBox Games Database disc scans, for jc-art.c (included from it).
+/* LaunchBox Games Database: game info and disc scans, for jc-art.c (included from it).
  *
  * LaunchBox publishes its whole database as one file, Metadata.zip
  * (gamesdb.launchbox-app.com/Metadata.zip). Its Metadata.xml lists every game
- * (<Game>: Name, DatabaseID, Platform) and every image (<GameImage>: DatabaseID,
- * FileName, Type, Region); an image is at images.launchbox-app.com/<FileName>.
+ * (<Game>: Name, DatabaseID, Platform, ReleaseYear, Genres, Developer, Publisher,
+ * MaxPlayers, Overview) and every image (<GameImage>: DatabaseID, FileName, Type,
+ * Region); an image is at images.launchbox-app.com/<FileName>.
  *
- * The zip is too big to keep, so it is read as it downloads: the zip entries
- * are inflated (miniz) and the XML parsed on the fly, keeping only the disc
- * images of the platforms asked for. The result is a small index,
- * COVER_DIR/launchbox.idx:
- *   #jc-lbdb 1<TAB>platform<TAB>platform...
- *   <platform index><TAB><normalised name><TAB><image file name>
+ * The zip is too big to keep, so it is read as it downloads: the zip entries are
+ * inflated (miniz) and the XML parsed on the fly, keeping only the games of the
+ * platforms asked for. Two files come out of it:
+ *   COVER_DIR/launchbox-info.txt  one line per game: id, platform, normalised
+ *                                 name, name, year, genres, developer, publisher,
+ *                                 players, overview (tab separated)
+ *   COVER_DIR/launchbox.idx       #jc-lbdb 2<TAB>platform<TAB>platform...
+ *                                 <platform><TAB><normalised name><TAB><offset in
+ *                                 the info file><TAB><disc image file or ->
  * built again when a platform is missing from it (or when Jewel Case deletes it).
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -26,8 +30,9 @@
 #define LB_URL "https://gamesdb.launchbox-app.com/Metadata.zip"
 #define LB_IMG "https://images.launchbox-app.com/"
 #define LB_IDX COVER_DIR "/launchbox.idx"
+#define LB_INFO COVER_DIR "/launchbox-info.txt"
 #define LB_FAIL COVER_DIR "/launchbox.fail"
-#define LB_MAXPLAT 16
+#define LB_MAXPLAT 48
 
 /* the PC test build can point these elsewhere (curl takes file:// URLs) */
 static const char *lb_url(const char *env, const char *def) {
@@ -38,22 +43,6 @@ static const char *lb_url(const char *env, const char *def) {
   (void)env;
   return def;
 }
-
-/* ------------------------------------------------------------------------ */
-/* the index                                                                 */
-/* ------------------------------------------------------------------------ */
-
-typedef struct {
-  char plat[LB_MAXPLAT][48];
-  int nplat;
-  /* entries: platform, normalised name, file */
-  unsigned char *eplat;
-  char **enorm, **efile;
-  int n;
-} LbIndex;
-
-static LbIndex g_lb;
-static int g_lb_tried;   /* built or loaded this run (0 = not yet, 1 = ok, -1 = failed) */
 
 /* platform names compared on letters and digits only, ignoring case */
 static int plat_eq(const char *a, const char *b) {
@@ -67,60 +56,96 @@ static int plat_eq(const char *a, const char *b) {
   }
 }
 
+/* ------------------------------------------------------------------------ */
+/* the index: which platforms it covers, and one platform's games at a time  */
+/* ------------------------------------------------------------------------ */
+
+typedef struct {
+  char plat[LB_MAXPLAT][48];
+  int nplat;
+  int loaded;              /* the platform whose entries are in memory, -1 none */
+  char **enorm, **efile;   /* efile NULL: no disc image */
+  long *eoff;
+  int n, cap;
+} LbIndex;
+
+static LbIndex g_lb = {.loaded = -1};
+static int g_lb_tried;   /* built or loaded this run (0 = not yet, 1 = ok, -1 = failed) */
+
 static int lb_plat_index(LbIndex *ix, const char *p) {
   for(int i = 0; i < ix->nplat; i++)
     if(plat_eq(ix->plat[i], p)) return i;
   return -1;
 }
 
-static void lb_free(LbIndex *ix) {
+static void lb_free_entries(LbIndex *ix) {
   for(int i = 0; i < ix->n; i++) {
     free(ix->enorm[i]);
     free(ix->efile[i]);
   }
-  free(ix->eplat);
   free(ix->enorm);
   free(ix->efile);
-  memset(ix, 0, sizeof *ix);
+  free(ix->eoff);
+  ix->enorm = ix->efile = NULL;
+  ix->eoff = NULL;
+  ix->n = ix->cap = 0;
+  ix->loaded = -1;
 }
 
-static int lb_load(LbIndex *ix) {
-  lb_free(ix);
+/* the index's platform list. 0 = there is an index */
+static int lb_header(LbIndex *ix) {
+  lb_free_entries(ix);
+  ix->nplat = 0;
   FILE *f = fopen(LB_IDX, "r");
   if(!f) return -1;
-  char line[700];
-  if(!fgets(line, sizeof line, f) || strncmp(line, "#jc-lbdb 1", 10)) {
-    fclose(f);
-    return -1;
-  }
+  char line[4096];
+  int ok = fgets(line, sizeof line, f) && !strncmp(line, "#jc-lbdb 2", 10);
+  fclose(f);
+  if(!ok) return -1;
   char *save = NULL;
   strtok_r(line, "\t\r\n", &save);
   for(char *t = strtok_r(NULL, "\t\r\n", &save); t && ix->nplat < LB_MAXPLAT; t = strtok_r(NULL, "\t\r\n", &save))
     snprintf(ix->plat[ix->nplat++], sizeof ix->plat[0], "%s", t);
-  int cap = 0;
+  return 0;
+}
+
+/* one platform's games into memory */
+static int lb_load_plat(LbIndex *ix, int p) {
+  if(ix->loaded == p) return 0;
+  lb_free_entries(ix);
+  FILE *f = fopen(LB_IDX, "r");
+  if(!f) return -1;
+  char line[700];
+  if(!fgets(line, sizeof line, f)) {
+    fclose(f);
+    return -1;
+  }
   while(fgets(line, sizeof line, f)) {
-    char *a = line, *b = strchr(a, '\t'), *c = b ? strchr(b + 1, '\t') : NULL;
-    if(!b || !c) continue;
+    char *a = line, *b = strchr(a, '\t'), *c = b ? strchr(b + 1, '\t') : NULL, *d = c ? strchr(c + 1, '\t') : NULL;
+    if(!d || atoi(a) != p) continue;
     *b++ = 0;
     *c++ = 0;
-    c[strcspn(c, "\r\n")] = 0;
-    if(ix->n == cap) {
-      cap = cap ? cap * 2 : 1024;
-      unsigned char *np = realloc(ix->eplat, cap);
-      if(np) ix->eplat = np;
-      char **nn = realloc(ix->enorm, sizeof(char *) * cap);
+    *d++ = 0;
+    d[strcspn(d, "\r\n")] = 0;
+    if(ix->n == ix->cap) {
+      int nc = ix->cap ? ix->cap * 2 : 1024;
+      char **nn = realloc(ix->enorm, sizeof(char *) * nc);
       if(nn) ix->enorm = nn;
-      char **nf = realloc(ix->efile, sizeof(char *) * cap);
+      char **nf = realloc(ix->efile, sizeof(char *) * nc);
       if(nf) ix->efile = nf;
-      if(!np || !nn || !nf) break;
+      long *no = realloc(ix->eoff, sizeof(long) * nc);
+      if(no) ix->eoff = no;
+      if(!nn || !nf || !no) break;
+      ix->cap = nc;
     }
-    ix->eplat[ix->n] = (unsigned char)atoi(a);
     ix->enorm[ix->n] = strdup(b);
-    ix->efile[ix->n] = strdup(c);
-    if(!ix->enorm[ix->n] || !ix->efile[ix->n]) break;
+    ix->eoff[ix->n] = atol(c);
+    ix->efile[ix->n] = strcmp(d, "-") ? strdup(d) : NULL;
+    if(!ix->enorm[ix->n]) break;
     ix->n++;
   }
   fclose(f);
+  ix->loaded = p;
   return 0;
 }
 
@@ -130,17 +155,18 @@ static int lb_load(LbIndex *ix) {
 
 typedef struct {
   int id;
-  unsigned char plat;
+  int disc;                /* index into the disc file names, -1 none */
   int score;
-  char norm[60];
-  char file[64];
 } LbGame;
 
 typedef struct {
   /* what to keep */
   LbIndex *ix;
+  FILE *info;
   LbGame *games;
   int ngames, cap, sorted;
+  char (*discs)[64];
+  int ndiscs, dcap;
   int images;
   /* zip */
   int zstate;              /* 0 header, 1 name, 2 extra, 3 inflate, 4 stored skip, 5 descriptor, 6 end */
@@ -166,9 +192,10 @@ typedef struct {
   int depth;
   int rec;                 /* 0 none, 1 Game, 2 GameImage */
   char field[40];
-  char text[520];
+  char text[2400];
   int xlen;
   char r_name[300], r_plat[64], r_id[16], r_file[80], r_type[40], r_region[48];
+  char r_year[16], r_date[40], r_genres[200], r_dev[160], r_pub[160], r_players[16], r_overview[1600];
 } LbBuild;
 
 static void xml_unescape(char *s) {
@@ -201,6 +228,12 @@ static int game_cmp(const void *a, const void *b) {
   return x < y ? -1 : x > y;
 }
 
+/* tabs and line breaks become spaces, so a value fits in one tab-separated field */
+static void one_line(char *s) {
+  for(; *s; s++)
+    if(*s == '\t' || *s == '\n' || *s == '\r') *s = ' ';
+}
+
 static int region_rank(const char *r) {
   if(!*r) return 30;
   if(strstr(r, "North America") || strstr(r, "United States")) return 50;
@@ -215,23 +248,30 @@ static void lb_record(LbBuild *b) {
   if(b->rec == 1) {
     int p = lb_plat_index(b->ix, b->r_plat);
     int id = atoi(b->r_id);
-    if(p < 0 || id <= 0) return;
+    if(p < 0 || id <= 0 || !b->info) return;
     if(b->ngames == b->cap) {
-      int nc = b->cap ? b->cap * 2 : 2048;
+      int nc = b->cap ? b->cap * 2 : 4096;
       LbGame *ng = realloc(b->games, sizeof(LbGame) * nc);
       if(!ng) return;
       b->games = ng;
       b->cap = nc;
     }
     LbGame *g = &b->games[b->ngames++];
-    memset(g, 0, sizeof *g);
     g->id = id;
-    g->plat = (unsigned char)p;
+    g->disc = -1;
     g->score = -1;
-    norm(b->r_name, g->norm, sizeof g->norm);
     b->sorted = 0;
+    char nb[200];
+    norm(b->r_name, nb, sizeof nb);
+    const char *year = b->r_year[0] ? b->r_year : b->r_date;
+    char y[8];
+    snprintf(y, sizeof y, "%.4s", year);
+    char *f[] = {b->r_name, b->r_genres, b->r_dev, b->r_pub, b->r_players, b->r_overview};
+    for(int i = 0; i < 6; i++) one_line(f[i]);
+    fprintf(b->info, "%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", id, p, nb, b->r_name, y, b->r_genres, b->r_dev,
+            b->r_pub, b->r_players, b->r_overview);
   } else if(b->rec == 2) {
-    if(strcmp(b->r_type, "Disc") || !b->r_file[0] || strlen(b->r_file) >= sizeof b->games[0].file) return;
+    if(strcmp(b->r_type, "Disc") || !b->r_file[0] || strlen(b->r_file) >= sizeof b->discs[0]) return;
     if(!b->ngames) return;
     if(!b->sorted) {
       qsort(b->games, b->ngames, sizeof(LbGame), game_cmp);
@@ -241,10 +281,19 @@ static void lb_record(LbBuild *b) {
     LbGame *g = bsearch(&key, b->games, b->ngames, sizeof(LbGame), game_cmp);
     if(!g) return;
     int s = region_rank(b->r_region);
-    if(s > g->score) {
-      g->score = s;
-      snprintf(g->file, sizeof g->file, "%s", b->r_file);
+    if(s <= g->score) return;
+    g->score = s;
+    if(g->disc < 0) {
+      if(b->ndiscs == b->dcap) {
+        int nc = b->dcap ? b->dcap * 2 : 1024;
+        char (*nd)[64] = realloc(b->discs, sizeof(*nd) * nc);
+        if(!nd) return;
+        b->discs = nd;
+        b->dcap = nc;
+      }
+      g->disc = b->ndiscs++;
     }
+    snprintf(b->discs[g->disc], sizeof b->discs[0], "%s", b->r_file);
     b->images++;
   }
 }
@@ -266,12 +315,22 @@ static void xml_tag(LbBuild *b) {
       xml_unescape(b->text);
       char *dst = NULL;
       size_t cap = 0;
-      if(!strcmp(name, "Name")) { dst = b->r_name; cap = sizeof b->r_name; }
-      else if(!strcmp(name, "Platform")) { dst = b->r_plat; cap = sizeof b->r_plat; }
-      else if(!strcmp(name, "DatabaseID")) { dst = b->r_id; cap = sizeof b->r_id; }
-      else if(!strcmp(name, "FileName")) { dst = b->r_file; cap = sizeof b->r_file; }
-      else if(!strcmp(name, "Type")) { dst = b->r_type; cap = sizeof b->r_type; }
-      else if(!strcmp(name, "Region")) { dst = b->r_region; cap = sizeof b->r_region; }
+#define FIELD(tagname, var) else if(!strcmp(name, tagname)) { dst = var; cap = sizeof var; }
+      if(0) {}
+      FIELD("Name", b->r_name)
+      FIELD("Platform", b->r_plat)
+      FIELD("DatabaseID", b->r_id)
+      FIELD("FileName", b->r_file)
+      FIELD("Type", b->r_type)
+      FIELD("Region", b->r_region)
+      FIELD("ReleaseYear", b->r_year)
+      FIELD("ReleaseDate", b->r_date)
+      FIELD("Genres", b->r_genres)
+      FIELD("Developer", b->r_dev)
+      FIELD("Publisher", b->r_pub)
+      FIELD("MaxPlayers", b->r_players)
+      FIELD("Overview", b->r_overview)
+#undef FIELD
       if(dst) snprintf(dst, cap, "%s", b->text);
       b->field[0] = 0;
     } else if(b->depth == 2 && b->rec) {
@@ -285,7 +344,11 @@ static void xml_tag(LbBuild *b) {
   b->depth++;
   if(b->depth == 2) {
     b->rec = !strcmp(name, "Game") ? 1 : !strcmp(name, "GameImage") ? 2 : 0;
-    if(b->rec) b->r_name[0] = b->r_plat[0] = b->r_id[0] = b->r_file[0] = b->r_type[0] = b->r_region[0] = 0;
+    if(b->rec) {
+      b->r_name[0] = b->r_plat[0] = b->r_id[0] = b->r_file[0] = b->r_type[0] = b->r_region[0] = 0;
+      b->r_year[0] = b->r_date[0] = b->r_genres[0] = b->r_dev[0] = b->r_pub[0] = b->r_players[0] = 0;
+      b->r_overview[0] = 0;
+    }
   } else if(b->depth == 3 && b->rec) {
     snprintf(b->field, sizeof b->field, "%s", name);
     b->xlen = 0;
@@ -463,51 +526,74 @@ static int zip_sink(void *ctx, const char *data, size_t n) {
   return 0;
 }
 
-/* download and index the disc images of the platforms in want[] (plus the
- * ones already in the index). 0 = ok */
+/* download the database and index the games of the platforms in want[] (plus
+ * the ones already in the index). 0 = ok */
 static int lb_build(const char want[][48], int nwant) {
   LbBuild *b = calloc(1, sizeof *b);
   if(!b) return -1;
   LbIndex *ix = &g_lb;
   char old[LB_MAXPLAT][48];
   int nold = 0;
-  if(lb_load(ix) == 0) {
+  if(lb_header(ix) == 0)
     for(int i = 0; i < ix->nplat; i++) snprintf(old[nold++], sizeof old[0], "%s", ix->plat[i]);
-  }
-  lb_free(ix);
+  ix->nplat = 0;
   for(int i = 0; i < nold; i++) snprintf(ix->plat[ix->nplat++], sizeof ix->plat[0], "%s", old[i]);
   for(int i = 0; i < nwant && ix->nplat < LB_MAXPLAT; i++)
     if(lb_plat_index(ix, want[i]) < 0) snprintf(ix->plat[ix->nplat++], sizeof ix->plat[0], "%s", want[i]);
   b->ix = ix;
+  b->info = fopen(LB_INFO ".part", "w");
+  if(!b->info) {
+    free(b);
+    return -1;
+  }
 
   logl("launchbox: downloading the database for %d platform(s)", ix->nplat);
   status("running 0 0 %ld", (long)time(NULL));
   int st = http_get(lb_url("JC_LB_URL", LB_URL), zip_sink, b);
+  fclose(b->info);
   logl("launchbox: %d, %llu MB downloaded, %llu MB of XML, %d games, %d disc images, error %d", st,
        b->net_bytes >> 20, b->xml_bytes >> 20, b->ngames, b->images, b->error);
   int ok = b->target_done && b->ngames > 0;
   if(ok) {
-    char part[300];
-    snprintf(part, sizeof part, "%s.part", LB_IDX);
-    FILE *f = fopen(part, "w");
-    if(f) {
-      fprintf(f, "#jc-lbdb 1");
-      for(int i = 0; i < ix->nplat; i++) fprintf(f, "\t%s", ix->plat[i]);
-      fprintf(f, "\n");
-      int kept = 0;
-      for(int i = 0; i < b->ngames; i++)
-        if(b->games[i].file[0] && b->games[i].norm[0]) {
-          fprintf(f, "%d\t%s\t%s\n", b->games[i].plat, b->games[i].norm, b->games[i].file);
+    if(!b->sorted) qsort(b->games, b->ngames, sizeof(LbGame), game_cmp);
+    /* the index: from the info file, with each game's line offset and disc */
+    FILE *in = fopen(LB_INFO ".part", "r"), *out = fopen(LB_IDX ".part", "w");
+    ok = in && out;
+    if(ok) {
+      fprintf(out, "#jc-lbdb 2");
+      for(int i = 0; i < ix->nplat; i++) fprintf(out, "\t%s", ix->plat[i]);
+      fprintf(out, "\n");
+      static char line[4096];
+      long off = ftell(in);
+      int kept = 0, discs = 0;
+      while(fgets(line, sizeof line, in)) {
+        long here = off;
+        off = ftell(in);
+        char *a = line, *pb = strchr(a, '\t'), *pc = pb ? strchr(pb + 1, '\t') : NULL;
+        char *pd = pc ? strchr(pc + 1, '\t') : NULL;
+        if(!pd) continue;
+        *pd = 0;
+        LbGame key = {.id = atoi(a)};
+        LbGame *g = bsearch(&key, b->games, b->ngames, sizeof(LbGame), game_cmp);
+        const char *disc = g && g->disc >= 0 ? b->discs[g->disc] : "-";
+        if(pc[1]) {
+          fprintf(out, "%d\t%s\t%ld\t%s\n", atoi(pb + 1), pc + 1, here, disc);
           kept++;
+          if(*disc != '-') discs++;
         }
-      fclose(f);
-      rename(part, LB_IDX);
-      logl("launchbox: index written, %d discs", kept);
-    } else {
-      ok = 0;
+      }
+      logl("launchbox: index written, %d games, %d with a disc", kept, discs);
+    }
+    if(in) fclose(in);
+    if(out) fclose(out);
+    if(ok) {
+      rename(LB_INFO ".part", LB_INFO);
+      rename(LB_IDX ".part", LB_IDX);
     }
   }
+  unlink(LB_INFO ".part");
   free(b->games);
+  free(b->discs);
   free(b);
   if(!ok) {
     FILE *f = fopen(LB_FAIL, "w");
@@ -518,19 +604,19 @@ static int lb_build(const char want[][48], int nwant) {
     return -1;
   }
   unlink(LB_FAIL);
-  return lb_load(ix);
+  return lb_header(ix);
 }
 
 /* the index, loaded or built, covering every platform in want[]. 0 = ready */
 static int lb_ready(const char want[][48], int nwant) {
   if(g_lb_tried) return g_lb_tried > 0 ? 0 : -1;
   g_lb_tried = -1;
-  if(lb_load(&g_lb) == 0) {
+  if(lb_header(&g_lb) == 0) {
     int all = 1;
     for(int i = 0; i < nwant; i++)
       if(lb_plat_index(&g_lb, want[i]) < 0) all = 0;
     if(all) {
-      logl("launchbox: index loaded, %d discs", g_lb.n);
+      logl("launchbox: index ready, %d platforms", g_lb.nplat);
       g_lb_tried = 1;
       return 0;
     }
@@ -551,18 +637,17 @@ static int lb_ready(const char want[][48], int nwant) {
   return 0;
 }
 
-/* 0 = saved, -1 = LaunchBox has no disc for it, -2 = couldn't ask */
-static int find_lb_disc(const char *platform, const char *rom, const char *out) {
+/* the index entry for a ROM on a platform: -1 none, -2 no index */
+static int lb_match(const char *platform, const char *rom) {
   if(g_lb_tried <= 0) return -2;
   int p = lb_plat_index(&g_lb, platform);
-  if(p < 0) return -2;
+  if(p < 0 || lb_load_plat(&g_lb, p) != 0) return -2;
   char nr[512];
   norm(rom, nr, sizeof nr);
   size_t lr = strlen(nr);
   if(!lr) return -1;
   int best = -1, best_score = -1;
   for(int i = 0; i < g_lb.n; i++) {
-    if(g_lb.eplat[i] != p) continue;
     const char *nc = g_lb.enorm[i];
     int score;
     if(!strcmp(nc, nr)) {
@@ -573,17 +658,25 @@ static int find_lb_disc(const char *platform, const char *rom, const char *out) 
       if(sh < 6 || sh * 10 < lo * 7 || strncmp(nc, nr, sh)) continue;
       score = 500 - (int)(lo - sh) * 4;
     }
+    if(g_lb.efile[i]) score += 2;   /* of two equal names, the one with a disc */
     if(score > best_score) {
       best_score = score;
       best = i;
     }
   }
-  if(best < 0) {
+  return best;
+}
+
+/* 0 = saved, -1 = LaunchBox has no disc for it, -2 = couldn't ask */
+static int find_lb_disc(const char *platform, const char *rom, const char *out) {
+  int e = lb_match(platform, rom);
+  if(e == -2) return -2;
+  if(e < 0 || !g_lb.efile[e]) {
     logl("launchbox: no disc for %s (%s)", rom, platform);
     return -1;
   }
   char url[400], part[1100], enc[300];
-  url_encode(g_lb.efile[best], enc, sizeof enc);
+  url_encode(g_lb.efile[e], enc, sizeof enc);
   snprintf(url, sizeof url, "%s%s", lb_url("JC_LB_IMG", LB_IMG), enc);
   snprintf(part, sizeof part, "%s.part", out);
   FileSink fs;
@@ -591,7 +684,7 @@ static int find_lb_disc(const char *platform, const char *rom, const char *out) 
   if(!(fs.f = fopen(part, "wb"))) return -2;
   int st = http_get(url, file_sink, &fs);
   fclose(fs.f);
-  logl("launchbox: %s -> %s: %d, %lu bytes", rom, g_lb.efile[best], st, (unsigned long)fs.total);
+  logl("launchbox: %s -> %s: %d, %lu bytes", rom, g_lb.efile[e], st, (unsigned long)fs.total);
   if(st == 200 && (fs.kind == 1 || fs.kind == 2) && fs.total >= 100) {
     char final[1100];
     snprintf(final, sizeof final, "%s.%s", out, fs.kind == 2 ? "jpg" : "png");
@@ -599,4 +692,47 @@ static int find_lb_disc(const char *platform, const char *rom, const char *out) 
   }
   unlink(part);
   return st == 404 ? -1 : -2;
+}
+
+/* the game's info into <out>.txt: "Key: value" lines, a blank line, the overview.
+ * 0 = saved, -1 = not in the database, -2 = no index */
+static int find_lb_info(const char *platform, const char *rom, const char *out) {
+  int e = lb_match(platform, rom);
+  if(e == -2) return -2;
+  if(e < 0) {
+    logl("launchbox: no info for %s (%s)", rom, platform);
+    return -1;
+  }
+  FILE *in = fopen(LB_INFO, "r");
+  if(!in) return -2;
+  static char line[4096];
+  int ok = fseek(in, g_lb.eoff[e], SEEK_SET) == 0 && fgets(line, sizeof line, in);
+  fclose(in);
+  if(!ok) return -2;
+  line[strcspn(line, "\r\n")] = 0;
+  char *f[10] = {0};
+  int nf = 0;
+  for(char *p = line; nf < 10; nf++) {
+    f[nf] = p;
+    char *t = strchr(p, '\t');
+    if(!t) {
+      nf++;
+      break;
+    }
+    *t = 0;
+    p = t + 1;
+  }
+  if(nf < 10) return -1;
+  char tmp[1100];
+  snprintf(tmp, sizeof tmp, "%s.txt.part", out);
+  FILE *o = fopen(tmp, "w");
+  if(!o) return -2;
+  static const char *keys[] = {"Name", "Year", "Genre", "Developer", "Publisher", "Players"};
+  for(int i = 0; i < 6; i++)
+    if(f[3 + i][0]) fprintf(o, "%s: %s\n", keys[i], f[3 + i]);
+  fprintf(o, "\n%s\n", f[9]);
+  fclose(o);
+  char final[1100];
+  snprintf(final, sizeof final, "%s.txt", out);
+  return rename(tmp, final);
 }
