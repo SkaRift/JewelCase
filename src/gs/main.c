@@ -2988,12 +2988,40 @@ static int copy_plain(const char *from, const char *to) {
     return 0;
 }
 
+/* what stage_launchbox did, in COVER_DIR/lb-stage.txt (the app's own output isn't kept on the
+ * console): for finding out why LaunchBox art doesn't arrive */
+static char g_lb_report[4096];
+static void lb_note(const char *fmt, ...) {
+    size_t n = strlen(g_lb_report);
+    if (n + 2 >= sizeof(g_lb_report)) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_lb_report + n, sizeof(g_lb_report) - n - 1, fmt, ap);
+    va_end(ap);
+    strncat(g_lb_report, "\n", sizeof(g_lb_report) - strlen(g_lb_report) - 1);
+}
+
+static void stage_launchbox_(void);
 static void stage_launchbox(void) {
+    g_lb_report[0] = 0;
+    lb_note("Jewel Case %s, app folder %s, LaunchBox %s", GS_VERSION, g_appdir, JC_LAUNCHBOX ? "on" : "off");
+    stage_launchbox_();
+    char rp[1024];
+    real_path(COVER_DIR, rp, sizeof(rp));
+    mkdir(rp, 0777);
+    write_file(COVER_DIR "/lb-stage.txt", g_lb_report);
+}
+
+static void stage_launchbox_(void) {
     if (!JC_LAUNCHBOX) return;
     char p[700], q[700], rp[1024];
     snprintf(p, sizeof(p), "%s/assets/VERSION", g_appdir);
     char *have = read_file(p, NULL);
-    if (!have) return;   /* a build without the data */
+    if (!have) {
+        lb_note("no %s: this build has no LaunchBox data, or the app can't read its folder", p);
+        return;
+    }
+    lb_note("database in the app: %.20s", have);
     real_path(COVER_DIR, rp, sizeof(rp));
     mkdir(rp, 0777);
     real_path(COVER_DIR "/lb", rp, sizeof(rp));
@@ -3005,6 +3033,7 @@ static void stage_launchbox(void) {
     snprintf(key, sizeof(key), "%s r2\n", have);
     char *was = read_file(COVER_DIR "/lb/VERSION", NULL);
     int fresh = !was || strcmp(was, key);
+    lb_note("on the console before: %.30s -> %s", was ? was : "(none)", fresh ? "copying it" : "up to date");
     if (fresh) {
         /* 1.1 and earlier downloaded the whole database instead */
         remove_file(COVER_DIR "/launchbox.idx");
@@ -3034,6 +3063,7 @@ static void stage_launchbox(void) {
             }
         }
         logf_("launchbox: database %s is new here, %d earlier misses to try again", have, cleared);
+        lb_note("%d earlier \"not found\" markers removed, so those are looked for again", cleared);
     }
     int copied = 0;
     for (int s = 0; s < g_nsys; s++) {
@@ -3044,8 +3074,13 @@ static void stage_launchbox(void) {
         snprintf(q, sizeof(q), COVER_DIR "/lb/%s.lbz", slug);
         if (!fresh && is_plain_file(q)) continue;
         snprintf(p, sizeof(p), "%s/assets/%s.lbz", g_appdir, slug);
-        if (copy_plain(p, q) == 0) copied++;
-        else logf_("launchbox: no %s in the app", p);
+        if (copy_plain(p, q) == 0) {
+            copied++;
+            lb_note("copied %s -> %s", p, q);
+        } else {
+            logf_("launchbox: no %s in the app", p);
+            lb_note("couldn't copy %s -> %s (errno %d)", p, q, errno);
+        }
     }
     if (fresh) write_file(COVER_DIR "/lb/VERSION", key);
     if (copied) logf_("launchbox: %d system(s) of database %s copied", copied, have);
