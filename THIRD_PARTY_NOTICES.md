@@ -139,9 +139,8 @@ Jewel Case (by SkaRift) is built on this boilerplate and adds these components:
 | Launch logic after [ps5-payload-websrv](https://github.com/ps5-payload-dev/websrv) | GPL-3.0 | `helper/jc-launch.c` |
 | HTTP sample from the [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk) | GPL-3.0 | `helper/jc-art.c` |
 
-Box art is downloaded at run time from [libretro-thumbnails](https://github.com/libretro-thumbnails)
-and is not part of this repository. The cartridge, card and disc artwork is drawn by
-`tools/make_media.py` and contains no console makers' logos.
+The cartridge, card and disc artwork contains no console makers' logos: it is drawn by
+`tools/make_media.py`, or rendered from the models below with their logos removed.
 
 ## Cartridge and disc models (CC BY 4.0)
 
@@ -158,3 +157,9 @@ Jewel Case (rendered front-on, labels blanked, logos removed, some recoloured):
 - "CD Jewel Case" (the disc) by enjoyboy, Blend Swap
 
 See assets/media/CREDITS.md.
+
+## Downloaded art
+
+Jewel Case includes no game art. On the console it downloads box art and title logos from
+the libretro-thumbnails project (https://github.com/libretro-thumbnails) and GameCube / Wii
+disc scans from GameTDB (https://www.gametdb.com). That art belongs to its owners.

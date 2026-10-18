@@ -64,6 +64,13 @@ To use your own art, put a .png or .jpg named like the game next to its
 file, or in a "covers" folder there. Your own art is always used instead of
 a download.
 
+Cartridge labels show the box art without the box's system banner and
+ratings. Discs show the art edge to edge with the game's title logo (also
+from libretro-thumbnails, in /data/jewelcase/covers/<system>/logos).
+GameCube and Wii discs use a scan of the real disc from GameTDB
+(art.gametdb.com) when there is one, found by the game ID inside the disc
+image (ISO, GCM, WBFS, CISO and RVZ files; not GCZ).
+
 Settings: Download missing covers, Redownload all covers, and an on/off
 switch for automatic downloads.
 
@@ -137,7 +144,8 @@ Built with and thanks to:
   SDL2 (zlib license), cJSON (MIT), stb_image / stb_truetype /
   stb_image_write (public domain), dr_mp3 (public domain / MIT-0),
   Poppins font (SIL Open Font License)
-  Box art: the libretro-thumbnails project
+  Box art and logos: the libretro-thumbnails project
+  GameCube and Wii disc scans: GameTDB (gametdb.com)
   Cartridge, card and disc renders: 3D models by Steven-Bennis (SNES),
   HippoStance (NES), Karolina D (Game Boy), Vxcl (GBA), Pcwer (DS),
   crocoman2019 (Switch) and enjoyboy (disc), CC BY 4.0, changed for

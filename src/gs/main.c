@@ -441,6 +441,8 @@ typedef struct Game {
     SDL_Texture *media, *refl;
     int media_w, media_h, refl_h;
     int media_pending;          /* built without art while its cover is downloading */
+    int extra_pending;          /* disc: its logo / disc scan not looked for yet */
+    int extra_state;            /* what extras_state() said when the image was built */
     Uint32 cover_check;         /* last time a pending cover was looked for */
 } Game;
 
@@ -2103,6 +2105,36 @@ static const char *tab_label(const System *s) {
     return l ? l->tab : s->shortname;
 }
 
+/* Downloaded box art carries the system's branding: a banner down the side or
+ * across the top (GAME BOY, PlayStation, NINTENDO GAMECUBE...), ratings and
+ * seals along the bottom. Labels show the art without it: the part of the box
+ * to keep, as fractions of its width and height. Your own art is used whole. */
+typedef struct {
+    const char *id;
+    float x0, y0, x1, y1;
+} BoxCrop;
+
+static const BoxCrop BOX_CROPS[] = {
+    {"nes", 0, 0, 1, 0.90f},          {"snes", 0, 0, 0.88f, 0.80f},     {"n64", 0, 0, 0.80f, 0.98f},
+    {"gb", 0.20f, 0, 1, 0.94f},       {"gbc", 0.19f, 0, 1, 0.90f},      {"gba", 0.15f, 0, 1, 0.87f},
+    {"nds", 0.12f, 0, 1, 0.88f},      {"3ds", 0, 0, 0.90f, 0.90f},      {"genesis", 0, 0.05f, 1, 0.92f},
+    {"psx", 0.145f, 0, 1, 0.95f},     {"ps2", 0, 0.085f, 1, 0.90f},     {"ps3", 0, 0.08f, 1, 0.90f},
+    {"psp", 0, 0.06f, 1, 0.88f},      {"gc", 0, 0.085f, 1, 0.90f},      {"wii", 0, 0.09f, 1, 0.90f},
+    {"wiiu", 0, 0.09f, 1, 0.90f},     {"dc", 0, 0, 1, 0.93f},           {"saturn", 0.15f, 0, 1, 1},
+    {"switch", 0, 0.075f, 1, 0.90f},  {"xbox", 0, 0.07f, 1, 0.92f},     {"xbox360", 0, 0.08f, 1, 0.92f},
+};
+
+static const BoxCrop *box_crop_of(const System *s) {
+    for (size_t i = 0; i < sizeof(BOX_CROPS) / sizeof(*BOX_CROPS); i++)
+        if (!strcmp(BOX_CROPS[i].id, s->id)) return &BOX_CROPS[i];
+    return NULL;
+}
+
+/* systems GameTDB has disc scans for, found by the game ID in the disc image */
+static int has_disc_scans(const System *s) {
+    return !strcmp(s->id, "gc") || !strcmp(s->id, "wii");
+}
+
 /* a system colour bright enough to fill a tab with white text on it */
 static Uint32 accent_of(Uint32 c) {
     float r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
@@ -2335,6 +2367,37 @@ static int cover_of(Game *g, char *out, size_t cap) {
     return 0;   /* not downloaded (yet): looked for again while it's on screen */
 }
 
+/* a disc's extras: kind 0 its title logo (libretro Named_Logos), 1 its disc scan (GameTDB) */
+static void extra_base(Game *g, int kind, char *out, size_t cap) {
+    snprintf(out, cap, COVER_DIR "/%s/%s/%s", g_sys[g->sys].id, kind ? "disc" : "logos", g->stem);
+}
+
+/* 1 = have it (path in out), -1 = looked for and not found, 0 = not looked for yet */
+static int extra_of(Game *g, int kind, char *out, size_t cap) {
+    char base[1100];
+    extra_base(g, kind, base, sizeof(base));
+    snprintf(out, cap, "%s.png", base);
+    if (file_exists(out)) return 1;
+    char none[1200];
+    snprintf(none, sizeof(none), "%s.none", base);
+    return file_exists(none) ? -1 : 0;
+}
+
+static int wants_extras(Game *g) {
+    const SysLook *l = look_of(&g_sys[g->sys]);
+    return l && l->repo && MEDIA_TPL[tpl_of(&g_sys[g->sys])].kind == 1;
+}
+
+/* the extras as one number, to notice when one arrives; *pending = one isn't looked for yet */
+static int extras_state(Game *g, int *pending) {
+    *pending = 0;
+    if (!wants_extras(g)) return 0;
+    char p[1200];
+    int lo = extra_of(g, 0, p, sizeof(p)), sc = has_disc_scans(&g_sys[g->sys]) ? extra_of(g, 1, p, sizeof(p)) : -1;
+    if (lo == 0 || sc == 0) *pending = 1;
+    return (lo + 1) + 3 * (sc + 1);
+}
+
 static void poll_art_status(void) {
     Uint32 now = SDL_GetTicks();
     if (g_art_polled && (Sint32)(now - g_art_polled) < 1000) return;
@@ -2377,11 +2440,24 @@ static void start_cover_helper(void) {
         if (!l || !l->repo) continue;
         for (int k = 0; k < g_sys[s].ngames; k++) {
             Game *g = &g_sys[s].games[k];
-            if (g->art[0]) continue;
             char base[1100], line[2600];
-            cover_base(g, base, sizeof(base));
-            int n = snprintf(line, sizeof(line), "G\t%s\t%s\t%s\n", l->repo, base, g->stem);
-            if (n <= 0 || len + (size_t)n + 1 >= cap) break;
+            int n = 0;
+            /* discs first want their logo and disc scan, so those are there by the
+             * time the cover arrives and the disc is drawn */
+            if (wants_extras(g)) {
+                extra_base(g, 0, base, sizeof(base));
+                n += snprintf(line + n, sizeof(line) - n, "L\t%s\t%s\t%s\n", l->repo, base, g->stem);
+                if (has_disc_scans(&g_sys[s]) && n < (int)sizeof(line)) {
+                    extra_base(g, 1, base, sizeof(base));
+                    n += snprintf(line + n, sizeof(line) - n, "T\t-\t%s\t%s\n", base, g->path);
+                }
+            }
+            if (!g->art[0] && n < (int)sizeof(line)) {
+                cover_base(g, base, sizeof(base));
+                n += snprintf(line + n, sizeof(line) - n, "G\t%s\t%s\t%s\n", l->repo, base, g->stem);
+            }
+            if (n <= 0) continue;
+            if (n >= (int)sizeof(line) || len + (size_t)n + 1 >= cap) break;
             memcpy(req + len, line, (size_t)n + 1);
             len += (size_t)n;
             count++;
@@ -2534,7 +2610,7 @@ static void free_media(Game *g) {
     if (g->media) SDL_DestroyTexture(g->media);
     if (g->refl) SDL_DestroyTexture(g->refl);
     g->media = g->refl = NULL;
-    g->media_pending = 0;
+    g->media_pending = g->extra_pending = 0;
 }
 
 /* keep the images of the games near the selection only */
@@ -2556,8 +2632,9 @@ static void trim_media(void) {
 /* Carousel images                                                           */
 /* ------------------------------------------------------------------------ */
 
-/* The whole cover on the label: a dimmed, stretched copy of it fills the
- * label, the cover itself sits on top, scaled to fit (nothing cut off). */
+/* The art on the label: a dimmed, stretched copy of it fills the label, the art
+ * itself sits on top, scaled to fill the label but losing no more than a sliver
+ * of its edges (the rest of the gap shows the backdrop). */
 static void draw_art_fill(SDL_Surface *art, int x, int y, int w, int h) {
     SDL_Texture *t = SDL_CreateTextureFromSurface(R, art);
     if (!t) return;
@@ -2574,13 +2651,24 @@ static void draw_art_fill(SDL_Surface *art, int x, int y, int w, int h) {
     SDL_Rect dst = {x, y, w, h};
     SDL_SetTextureColorMod(t, 70, 70, 76);
     SDL_RenderCopy(R, t, &src, &dst);
-    /* the cover, fitted */
-    int fw = w, fh = h;
-    if (sa > sd) fh = (int)(w / sa);
-    else fw = (int)(h * sa);
-    SDL_Rect fit = {x + (w - fw) / 2, y + (h - fh) / 2, fw, fh};
+    /* the art: between fitting and filling */
+    float fit = SDL_min((float)w / art->w, (float)h / art->h), fill = SDL_max((float)w / art->w, (float)h / art->h);
+    float sc = SDL_min(fill, fit * 1.18f);
+    float vw = art->w * sc, vh = art->h * sc;
+    SDL_Rect s2 = {0, 0, art->w, art->h};
+    if (vw > w) {
+        s2.w = (int)(w / sc);
+        s2.x = (art->w - s2.w) / 2;
+        vw = (float)w;
+    }
+    if (vh > h) {
+        s2.h = (int)(h / sc);
+        s2.y = (int)((art->h - s2.h) * 0.4f);   /* titles tend to sit at the top */
+        vh = (float)h;
+    }
+    SDL_Rect d2 = {x + (int)((w - vw) / 2), y + (int)((h - vh) / 2), (int)vw, (int)vh};
     SDL_SetTextureColorMod(t, 255, 255, 255);
-    SDL_RenderCopy(R, t, NULL, &fit);
+    SDL_RenderCopy(R, t, &s2, &d2);
     SDL_DestroyTexture(t);
 }
 
@@ -2593,22 +2681,95 @@ static Uint32 art_px(SDL_Surface *art, float u, float v) {
     return ((Uint32 *)((Uint8 *)art->pixels + ay * art->pitch))[ax] & 0xffffff;
 }
 
-/* the disc label, masked to the ring r_in..r_out: the whole cover fitted in a
- * square in the middle (its corners just reach the rim), the rest of the disc
- * a dimmed, stretched copy of it; without art, a shade of the system colour */
-static SDL_Texture *disc_label(SDL_Surface *art, Uint32 fill, int r_in, int r_out) {
+/* the part of a surface inside fractions x0..x1, y0..y1 (frees the original) */
+static SDL_Surface *crop_surface(SDL_Surface *s, const BoxCrop *c) {
+    SDL_Rect r = {(int)(s->w * c->x0), (int)(s->h * c->y0), 0, 0};
+    r.w = (int)(s->w * c->x1) - r.x;
+    r.h = (int)(s->h * c->y1) - r.y;
+    if (r.w < 8 || r.h < 8) return s;
+    SDL_Surface *d = SDL_CreateRGBSurfaceWithFormat(0, r.w, r.h, 32, SDL_PIXELFORMAT_ARGB8888);
+    if (!d) return s;
+    SDL_SetSurfaceBlendMode(s, SDL_BLENDMODE_NONE);
+    SDL_BlitSurface(s, &r, d, NULL);
+    SDL_FreeSurface(s);
+    return d;
+}
+
+static Uint32 art_px_a(SDL_Surface *art, int x, int y) {
+    if (x < 0 || y < 0 || x >= art->w || y >= art->h) return 0;
+    return ((Uint32 *)((Uint8 *)art->pixels + y * art->pitch))[x];
+}
+
+/* bilinear sample of a small surface, u/v in 0..1 */
+static void art_bilinear(SDL_Surface *s, float u, float v, float *rgb) {
+    float fx = u * s->w - 0.5f, fy = v * s->h - 0.5f;
+    int x0 = (int)SDL_floorf(fx), y0 = (int)SDL_floorf(fy);
+    float ax = fx - x0, ay = fy - y0;
+    rgb[0] = rgb[1] = rgb[2] = 0;
+    for (int k = 0; k < 4; k++) {
+        int xx = SDL_clamp(x0 + (k & 1), 0, s->w - 1), yy = SDL_clamp(y0 + (k >> 1), 0, s->h - 1);
+        float wgt = ((k & 1) ? ax : 1 - ax) * ((k >> 1) ? ay : 1 - ay);
+        Uint32 p = ((Uint32 *)((Uint8 *)s->pixels + yy * s->pitch))[xx];
+        rgb[0] += ((p >> 16) & 255) * wgt;
+        rgb[1] += ((p >> 8) & 255) * wgt;
+        rgb[2] += (p & 255) * wgt;
+    }
+}
+
+/* Where a disc's title goes: the band above the hole, as real discs print it.
+ * In disc-label coordinates (0..2 r_out). */
+static SDL_Rect disc_title_band(int r_in, int r_out) {
+    int top = (int)(r_out * 0.11f), bottom = r_out - r_in - (int)(r_out * 0.04f);
+    int w = (int)(r_out * 1.42f);
+    return (SDL_Rect){r_out - w / 2, top, w, bottom - top};
+}
+
+/* The disc label, masked to the ring r_in..r_out.
+ *  scan: a disc scan (GameTDB), drawn as it is.
+ *  art:  box art filling the whole disc, softened toward the rim; with a logo,
+ *        the logo across the band above the hole on a soft shadow; title = 1
+ *        darkens that band for the title text drawn on it afterwards.
+ *  none: a shade of the system colour. */
+static SDL_Texture *disc_label(SDL_Surface *art, SDL_Surface *logo, int scan, int title, Uint32 fill, int r_in,
+                               int r_out) {
     int d = r_out * 2;
     SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, d, d, 32, SDL_PIXELFORMAT_ARGB8888);
     if (!s) return NULL;
-    float side = r_out * 1.62f;                     /* the cover's square */
-    float aw = 1, ah = 1;
-    if (art) {
-        float sa = (float)art->w / art->h;
-        if (sa > 1) ah = 1 / sa;
-        else aw = sa;
+    /* box art: cover the whole disc, and a tiny copy of it for the soft rim */
+    float sc = 1, offx = 0, offy = 0;
+    SDL_Surface *tiny = NULL;
+    if (art && !scan) {
+        sc = SDL_max((float)d / art->w, (float)d / art->h);
+        offx = (d - art->w * sc) / 2;
+        offy = (d - art->h * sc) / 2;
+        tiny = SDL_CreateRGBSurfaceWithFormat(0, 20, 20, 32, SDL_PIXELFORMAT_ARGB8888);
+        if (tiny) {
+            for (int y = 0; y < 20; y++)
+                for (int x = 0; x < 20; x++) {
+                    unsigned long acc[3] = {0, 0, 0}, n = 0;
+                    for (int yy = 0; yy < 4; yy++)
+                        for (int xx = 0; xx < 4; xx++) {
+                            float px = (x * 4 + xx + 0.5f) / 80 * d, py = (y * 4 + yy + 0.5f) / 80 * d;
+                            Uint32 b = art_px(art, (px - offx) / (art->w * sc), (py - offy) / (art->h * sc));
+                            acc[0] += (b >> 16) & 255;
+                            acc[1] += (b >> 8) & 255;
+                            acc[2] += b & 255;
+                            n++;
+                        }
+                    ((Uint32 *)((Uint8 *)tiny->pixels + y * tiny->pitch))[x] =
+                        0xff000000u | ((Uint32)(acc[0] / n) << 16) | ((Uint32)(acc[1] / n) << 8) | (Uint32)(acc[2] / n);
+                }
+        }
     }
-    float cw = side * aw, ch = side * ah;           /* the cover, fitted in the square */
-    float cx0 = r_out - cw / 2, cy0 = r_out - ch / 2;
+    /* the logo's place in the title band */
+    SDL_Rect band = disc_title_band(r_in, r_out);
+    int lx = 0, ly = 0;
+    if (logo) {
+        lx = band.x + (band.w - logo->w) / 2;
+        ly = band.y + (band.h - logo->h) / 2;
+    }
+    float bcx = band.x + band.w / 2.0f, bcy = band.y + band.h / 2.0f;
+    float brx = (logo ? logo->w : band.w) * 0.62f + 10, bry = (logo ? logo->h : band.h * 0.7f) * 0.75f + 10;
     for (int y = 0; y < d; y++) {
         Uint32 *row = (Uint32 *)((Uint8 *)s->pixels + y * s->pitch);
         for (int x = 0; x < d; x++) {
@@ -2619,24 +2780,57 @@ static SDL_Texture *disc_label(SDL_Surface *art, Uint32 fill, int r_in, int r_ou
                 row[x] = 0;
                 continue;
             }
-            Uint32 c;
-            if (art) {
-                float u = (x - cx0) / cw, v = (y - cy0) / ch;
-                if (u >= 0 && u < 1 && v >= 0 && v < 1) {
-                    c = art_px(art, u, v);
-                } else {
-                    Uint32 b = art_px(art, (float)x / d, (float)y / d);
-                    c = ((((b >> 16) & 255) * 70 / 255) << 16) | ((((b >> 8) & 255) * 70 / 255) << 8) |
-                        ((b & 255) * 76 / 255);
+            float c[3];
+            if (art && scan) {
+                Uint32 b = art_px(art, (x + 0.5f) / d, (y + 0.5f) / d);
+                c[0] = (b >> 16) & 255;
+                c[1] = (b >> 8) & 255;
+                c[2] = b & 255;
+            } else if (art) {
+                Uint32 b = art_px(art, (x + 0.5f - offx) / (art->w * sc), (y + 0.5f - offy) / (art->h * sc));
+                c[0] = (b >> 16) & 255;
+                c[1] = (b >> 8) & 255;
+                c[2] = b & 255;
+                /* toward the rim: the soft copy, a little darker */
+                float t = SDL_clamp((r / r_out - 0.80f) / 0.19f, 0.0f, 1.0f);
+                t = t * t * (3 - 2 * t);
+                if (tiny && t > 0) {
+                    float sb[3];
+                    art_bilinear(tiny, (x + 0.5f) / d, (y + 0.5f) / d, sb);
+                    for (int i = 0; i < 3; i++) c[i] = c[i] * (1 - t * 0.85f) + sb[i] * t * 0.85f;
+                }
+                float k = 1 - 0.22f * t;
+                /* the title band: a soft shade behind the logo or title */
+                if (logo || title) {
+                    float ex = (x - bcx) / brx, ey = (y - bcy) / bry;
+                    float e = ex * ex + ey * ey;
+                    if (e < 1) k *= 1 - 0.42f * (1 - e) * (1 - e);
+                }
+                for (int i = 0; i < 3; i++) c[i] *= k;
+                if (logo) {
+                    /* shadow, then the logo */
+                    Uint32 sp = art_px_a(logo, x - lx - 3, y - ly - 4);
+                    float sa = ((sp >> 24) & 255) / 255.0f * 0.6f;
+                    for (int i = 0; i < 3; i++) c[i] *= 1 - sa;
+                    Uint32 lp = art_px_a(logo, x - lx, y - ly);
+                    float la = ((lp >> 24) & 255) / 255.0f;
+                    if (la > 0) {
+                        c[0] = c[0] * (1 - la) + ((lp >> 16) & 255) * la;
+                        c[1] = c[1] * (1 - la) + ((lp >> 8) & 255) * la;
+                        c[2] = c[2] * (1 - la) + (lp & 255) * la;
+                    }
                 }
             } else {
                 float k = 0.55f + 0.45f * (1.0f - r / r_out);
-                c = ((Uint32)(((fill >> 16) & 255) * k) << 16) | ((Uint32)(((fill >> 8) & 255) * k) << 8) |
-                    (Uint32)((fill & 255) * k);
+                c[0] = ((fill >> 16) & 255) * k;
+                c[1] = ((fill >> 8) & 255) * k;
+                c[2] = (fill & 255) * k;
             }
-            row[x] = ((Uint32)(a * 255) << 24) | c;
+            row[x] = ((Uint32)(a * 255) << 24) | ((Uint32)SDL_clamp(c[0], 0, 255) << 16) |
+                     ((Uint32)SDL_clamp(c[1], 0, 255) << 8) | (Uint32)SDL_clamp(c[2], 0, 255);
         }
     }
+    if (tiny) SDL_FreeSurface(tiny);
     SDL_Texture *t = SDL_CreateTextureFromSurface(R, s);
     if (t) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
     SDL_FreeSurface(s);
@@ -2685,8 +2879,10 @@ static void build_media(Game *g) {
 
     char cover[1200];
     int cst = cover_of(g, cover, sizeof(cover));
+    int downloaded = cst == 1 && !g->art[0] && !strncmp(cover, COVER_DIR "/", strlen(COVER_DIR) + 1);
     SDL_Surface *art = NULL;
-    if (cst == 1) art = load_art_surface(cover, t->kind ? t->ly * 2 : t->lw * 2, t->kind ? t->ly * 2 : t->lh * 2);
+    /* discs: big enough to cover the whole disc */
+    if (cst == 1) art = load_art_surface(cover, t->kind ? t->ly * 4 : t->lw * 2, t->kind ? t->ly * 4 : t->lh * 2);
     size_t cl = strlen(cover);
     if (art && cl > 4 && !strcmp(cover + cl - 4, ".png") && !strncmp(cover, COVER_DIR "/", strlen(COVER_DIR) + 1)) {
         /* a downloaded cover: keep a small JPEG of it instead, so it loads fast next time */
@@ -2715,9 +2911,33 @@ static void build_media(Game *g) {
         }
     }
 
+    /* the label shows the art without the box's system branding */
+    const BoxCrop *bc = downloaded ? box_crop_of(s) : NULL;
+    if (art && bc) art = crop_surface(art, bc);
+
+    /* discs: the title logo, or a scan of the real disc */
+    SDL_Surface *logo = NULL, *scan = NULL;
+    if (t->kind == 1 && wants_extras(g)) {
+        char ep[1200];
+        if (has_disc_scans(s) && extra_of(g, 1, ep, sizeof(ep)) == 1) scan = load_art_surface(ep, t->ly * 2, t->ly * 2);
+        if (!scan && art && extra_of(g, 0, ep, sizeof(ep)) == 1) {
+            SDL_Rect b = disc_title_band(t->lx, t->ly);
+            logo = load_art_surface(ep, b.w, (int)(b.h * 0.92f));
+            /* the box's own title is at its top: with the logo there instead,
+             * the disc shows the art below it */
+            static const BoxCrop below_title = {"", 0, 0.28f, 1, 1};
+            if (logo && art->h > art->w) art = crop_surface(art, &below_title);
+        }
+        g->extra_state = extras_state(g, &g->extra_pending);
+    } else {
+        g->extra_pending = 0;
+    }
+
     SDL_Texture *tgt = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, t->w, t->h);
     if (!tgt) {
         if (art) SDL_FreeSurface(art);
+        if (logo) SDL_FreeSurface(logo);
+        if (scan) SDL_FreeSurface(scan);
         return;
     }
     SDL_SetTextureBlendMode(tgt, SDL_BLENDMODE_BLEND);
@@ -2742,16 +2962,20 @@ static void build_media(Game *g) {
             title_on_label(g->title, t->lx, t->ly, t->lw, t->lh);
         }
     } else {
-        SDL_Texture *lab = disc_label(art, col, t->lx, t->ly);
+        int title = 0;   /* without a logo the box's own title is on the disc already */
+        SDL_Texture *lab = scan ? disc_label(scan, NULL, 1, 0, col, t->lx, t->ly)
+                                : disc_label(art, logo, 0, title, col, t->lx, t->ly);
+        int c = t->w / 2;
         if (lab) {
-            int c = t->w / 2;
             SDL_Rect d = {c - t->ly, c - t->ly, t->ly * 2, t->ly * 2};
             SDL_RenderCopy(R, lab, NULL, &d);
             SDL_DestroyTexture(lab);
         }
-        if (!art) {
-            int c = t->w / 2;
+        if (!art && !scan) {
             title_on_label(g->title, c - t->ly + 40, c - t->ly + 30, t->ly * 2 - 80, t->ly - t->lx - 20);
+        } else if (title) {
+            SDL_Rect b = disc_title_band(t->lx, t->ly);
+            title_on_label(g->title, c - t->ly + b.x, c - t->ly + b.y, b.w, b.h);
         }
     }
     if (T_tpl_over[ti]) {
@@ -2759,6 +2983,8 @@ static void build_media(Game *g) {
         SDL_RenderCopy(R, T_tpl_over[ti], NULL, NULL);
     }
     if (art) SDL_FreeSurface(art);
+    if (logo) SDL_FreeSurface(logo);
+    if (scan) SDL_FreeSurface(scan);
 
     /* floor reflection: the bottom of the image, flipped and fading out */
     int rh = (int)(t->h * REFL_FRACTION);
@@ -2878,11 +3104,13 @@ static void draw_carousel(Uint32 accent) {
             } else {
                 g_builds_left++;
             }
-        } else if (g->media_pending && SDL_GetTicks() - g->cover_check > 1500) {
+        } else if ((g->media_pending || g->extra_pending) && SDL_GetTicks() - g->cover_check > 1500) {
             char cover[1200];
             g->cover_check = SDL_GetTicks();
-            int st = cover_of(g, cover, sizeof(cover));
-            if (st != 0) {
+            int pend, rebuild = 0;
+            if (g->media_pending && cover_of(g, cover, sizeof(cover)) != 0) rebuild = 1;
+            if (g->extra_pending && extras_state(g, &pend) != g->extra_state) rebuild = 1;
+            if (rebuild) {
                 free_media(g);
                 g_builds_left++;
             }
@@ -3822,8 +4050,18 @@ static int reset_covers(int all) {
         if (!l || !l->repo) continue;
         for (int k = 0; k < g_sys[s].ngames; k++) {
             Game *g = &g_sys[s].games[k];
-            if (g->art[0]) continue;
             char base[1100], p[1200];
+            if (wants_extras(g))
+                for (int e = 0; e < 2; e++) {
+                    extra_base(g, e, base, sizeof(base));
+                    snprintf(p, sizeof(p), "%s.none", base);
+                    remove_file(p);
+                    if (all) {
+                        snprintf(p, sizeof(p), "%s.png", base);
+                        remove_file(p);
+                    }
+                }
+            if (g->art[0]) continue;
             cover_base(g, base, sizeof(base));
             snprintf(p, sizeof(p), "%s.none", base);
             remove_file(p);
@@ -3842,6 +4080,8 @@ static int reset_covers(int all) {
             if (!seen) {
                 char p[400];
                 snprintf(p, sizeof(p), COVER_DIR "/%s.idx", l->repo);
+                remove_file(p);
+                snprintf(p, sizeof(p), COVER_DIR "/%s.Named_Logos.idx", l->repo);
                 remove_file(p);
                 scopy(done_repo[nrepo++], 128, l->repo);
             }

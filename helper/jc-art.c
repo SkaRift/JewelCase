@@ -8,8 +8,13 @@
  * Request file:
  *   jewelcase-art 1
  *   G<TAB>repo<TAB>output path without extension<TAB>ROM file name without extension
+ *   L<TAB>repo<TAB>output path without extension<TAB>ROM file name without extension
+ *   T<TAB>-<TAB>output path without extension<TAB>disc image path
+ * G is the box art (Named_Boxarts), L the game's title logo (Named_Logos), T a
+ * disc scan from GameTDB (art.gametdb.com) for GameCube and Wii games, found by
+ * the game ID in the disc image's header.
  *
- * For each game: <output>.png when found, <output>.none when not (so it isn't
+ * For each line: <output>.png when found, <output>.none when not (so it isn't
  * looked for again). Progress: /data/jewelcase/covers/status.txt
  *   running <done> <total> <time>  /  done <found> <total> <time>  /  error <text>
  * Every step is also written to /data/jewelcase/covers/log.txt as it happens,
@@ -315,10 +320,9 @@ static int region_score(const char *name, const char *rom) {
 
 /* ------------------------------------------------------------------------ */
 /* the collection's file list                                                */
-/* ------------------------------------------------------------------------ */
-
 typedef struct {
   char repo[128];
+  char folder[32];
   char **names;   /* without .png */
   char **norms;
   int n;
@@ -437,23 +441,25 @@ static int load_index_file(Index *ix, const char *path) {
 
 static Small g_small;
 
-static Index *get_index(const char *repo) {
+static Index *get_index(const char *repo, const char *folder) {
   for(int i = 0; i < g_nix; i++)
-    if(!strcmp(g_ix[i].repo, repo)) return g_ix[i].n ? &g_ix[i] : NULL;
+    if(!strcmp(g_ix[i].repo, repo) && !strcmp(g_ix[i].folder, folder)) return g_ix[i].n ? &g_ix[i] : NULL;
   if(g_nix >= 48) return NULL;
   Index *ix = &g_ix[g_nix++];
   memset(ix, 0, sizeof *ix);
   snprintf(ix->repo, sizeof ix->repo, "%s", repo);
+  snprintf(ix->folder, sizeof ix->folder, "%s", folder);
 
   char path[600];
-  snprintf(path, sizeof path, COVER_DIR "/%s.idx", repo);
+  if(!strcmp(folder, "Named_Boxarts")) snprintf(path, sizeof path, COVER_DIR "/%s.idx", repo);
+  else snprintf(path, sizeof path, COVER_DIR "/%s.%s.idx", repo, folder);
   if(load_index_file(ix, path) == 0) {
-    logl("index %s: %d names (saved)", repo, ix->n);
+    logl("index %s/%s: %d names (saved)", repo, folder, ix->n);
     return ix;
   }
   ix->n = 0;
 
-  /* 1. the repository's top folder, for the Named_Boxarts folder's id */
+  /* 1. the repository's top folder, for the folder's id */
   char url[1024];
   g_small.len = 0;
   g_small.data[0] = 0;
@@ -461,7 +467,9 @@ static Index *get_index(const char *repo) {
   int st = http_get(url, small_sink, &g_small);
   char sha[64] = "";
   if(st == 200) {
-    const char *p = strstr(g_small.data, "\"path\":\"Named_Boxarts\"");
+    char key[64];
+    snprintf(key, sizeof key, "\"path\":\"%s\"", folder);
+    const char *p = strstr(g_small.data, key);
     if(p && (p = strstr(p, "\"sha\":\""))) {
       p += 7;
       size_t o = 0;
@@ -470,7 +478,7 @@ static Index *get_index(const char *repo) {
     }
   }
   if(!sha[0]) {
-    logl("index %s: top folder failed (%d)", repo, st);
+    logl("index %s/%s: top folder failed (%d)", repo, folder, st);
     return NULL;
   }
 
@@ -485,7 +493,7 @@ static Index *get_index(const char *repo) {
   fclose(tp.out);
   if(st != 200 || tp.count == 0) {
     unlink(part);
-    logl("index %s: list failed (%d, %d names)", repo, st, tp.count);
+    logl("index %s/%s: list failed (%d, %d names)", repo, folder, st, tp.count);
     return NULL;
   }
   rename(part, path);
@@ -493,7 +501,7 @@ static Index *get_index(const char *repo) {
     ix->n = 0;
     return NULL;
   }
-  logl("index %s: %d names (downloaded)", repo, ix->n);
+  logl("index %s/%s: %d names (downloaded)", repo, folder, ix->n);
   return ix;
 }
 
@@ -535,7 +543,9 @@ static const char *match(Index *ix, const char *rom) {
 typedef struct {
   FILE *f;
   size_t total;
-  int checked, kind;    /* kind: 1 PNG, 2 JPEG */
+  int checked, kind;    /* kind: 1 PNG, 2 JPEG, 3 text (a symlink's target) */
+  char text[400];
+  size_t tl;
 } FileSink;
 
 static int file_sink(void *ctx, const char *d, size_t n) {
@@ -544,7 +554,16 @@ static int file_sink(void *ctx, const char *d, size_t n) {
     s->checked = 1;
     if(n >= 4 && !memcmp(d, "\x89PNG", 4)) s->kind = 1;
     else if(n >= 3 && (unsigned char)d[0] == 0xff && (unsigned char)d[1] == 0xd8) s->kind = 2;
-    else return 1;      /* not an image */
+    else s->kind = 3;
+  }
+  if(s->kind == 3) {
+    /* the collections use symlinks for shared art: raw.githubusercontent.com
+     * answers with the link's target name instead of the image */
+    if(s->tl + n + 1 > sizeof s->text) return 1;
+    memcpy(s->text + s->tl, d, n);
+    s->tl += n;
+    s->text[s->tl] = 0;
+    return 0;
   }
   s->total += n;
   if(s->total > MAX_IMAGE) return 1;
@@ -552,7 +571,7 @@ static int file_sink(void *ctx, const char *d, size_t n) {
 }
 
 /* 0 = saved as <out>.png / .jpg */
-static int fetch_named(const char *repo, const char *name, const char *out) {
+static int fetch_named(const char *repo, const char *folder, const char *name, const char *out, int hops) {
   char lr[600], enc[1800], url[2400], part[1100];
   libretro_name(name, lr, sizeof lr);
   url_encode(lr, enc, sizeof enc);
@@ -561,8 +580,8 @@ static int fetch_named(const char *repo, const char *name, const char *out) {
   FileSink fs;
   memset(&fs, 0, sizeof fs);
   if(!(fs.f = fopen(part, "wb"))) return -1;
-  snprintf(url, sizeof url, "https://raw.githubusercontent.com/libretro-thumbnails/%s/master/Named_Boxarts/%s.png",
-           repo, enc);
+  snprintf(url, sizeof url, "https://raw.githubusercontent.com/libretro-thumbnails/%s/master/%s/%s.png",
+           repo, folder, enc);
   int st = http_get(url, file_sink, &fs);
   if(st != 200 && st != -2 && !fs.total) {
     /* the libretro thumbnail server, plain HTTP, as RetroArch uses it */
@@ -574,15 +593,26 @@ static int fetch_named(const char *repo, const char *name, const char *out) {
     }
     sys[o] = 0;
     url_encode(sys, senc, sizeof senc);
-    snprintf(url, sizeof url, "http://thumbnails.libretro.com/%s/Named_Boxarts/%s.png", senc, enc);
+    snprintf(url, sizeof url, "http://thumbnails.libretro.com/%s/%s/%s.png", senc, folder, enc);
     rewind(fs.f);
-    memset(&fs.total, 0, sizeof fs.total);
+    fs.total = fs.tl = 0;
     fs.checked = fs.kind = 0;
     st = http_get(url, file_sink, &fs);
   }
   fclose(fs.f);
-  logl("get %s/%s: %d, %lu bytes", repo, name, st, (unsigned long)fs.total);
-  if(st != 200 || fs.total < 100 || !fs.kind) {
+  if(st == 200 && fs.kind == 3) {
+    unlink(part);
+    size_t l = fs.tl;
+    while(l && (fs.text[l - 1] == '\n' || fs.text[l - 1] == '\r')) fs.text[--l] = 0;
+    logl("get %s/%s/%s: link to %s", repo, folder, name, fs.text);
+    if(hops < 3 && l > 4 && !strcasecmp(fs.text + l - 4, ".png") && !strchr(fs.text, '/') && !strchr(fs.text, '<')) {
+      fs.text[l - 4] = 0;
+      return fetch_named(repo, folder, fs.text, out, hops + 1);
+    }
+    return -1;
+  }
+  logl("get %s/%s/%s: %d, %lu bytes", repo, folder, name, st, (unsigned long)fs.total);
+  if(st != 200 || fs.total < 100 || (fs.kind != 1 && fs.kind != 2)) {
     unlink(part);
     return -1;
   }
@@ -591,12 +621,12 @@ static int fetch_named(const char *repo, const char *name, const char *out) {
   return rename(part, final);
 }
 
-static int find_cover(const char *repo, const char *rom, const char *out) {
-  Index *ix = get_index(repo);
+static int find_cover(const char *repo, const char *folder, const char *rom, const char *out) {
+  Index *ix = get_index(repo, folder);
   if(ix) {
     const char *name = match(ix, rom);
-    if(!name) logl("no match for %s in %s", rom, repo);
-    return name ? fetch_named(repo, name, out) : -1;
+    if(!name) logl("no match for %s in %s/%s", rom, repo, folder);
+    return name ? fetch_named(repo, folder, name, out, 0) : -1;
   }
   /* no file list: try the likely names */
   static const char *suffix[] = {"", " (USA)", " (World)", " (USA, Europe)", " (Europe)"};
@@ -604,14 +634,99 @@ static int find_cover(const char *repo, const char *rom, const char *out) {
     if(i && strchr(rom, '(')) break;   /* the ROM already names its region */
     char name[700];
     snprintf(name, sizeof name, "%s%s", rom, suffix[i]);
-    if(fetch_named(repo, name, out) == 0) return 0;
+    if(fetch_named(repo, folder, name, out, 0) == 0) return 0;
   }
   return -1;
 }
 
 /* ------------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------------ */
+/* GameTDB disc scans (GameCube and Wii)                                     */
+/* ------------------------------------------------------------------------ */
+
+/* the 6-character game ID from a disc image's header: plain ISO/GCM/NKit,
+ * WBFS, GameCube CISO, and Dolphin's RVZ/WIA (which keep a copy of the disc
+ * header uncompressed). GCZ is compressed throughout and has no ID to read. */
+static int disc_id(const char *path, char id[7]) {
+  char rp[1200];
+#ifdef JC_HOST
+  if(!strncmp(path, "/data/", 6)) snprintf(rp, sizeof rp, "%s%s", DATA, path + 5);
+  else snprintf(rp, sizeof rp, "%s", path);
+#else
+  snprintf(rp, sizeof rp, "%s", path);
+#endif
+  FILE *f = fopen(rp, "rb");
+  if(!f) return -1;
+  unsigned char h[8];
+  long off = 0;
+  if(fread(h, 1, sizeof h, f) == sizeof h) {
+    if(!memcmp(h, "WBFS", 4)) off = 0x200;
+    else if(!memcmp(h, "CISO", 4)) off = 0x8000;
+    else if(!memcmp(h, "WIA\x01", 4) || !memcmp(h, "RVZ\x01", 4)) off = 0x58;
+  }
+  int ok = 0;
+  if(fseek(f, off, SEEK_SET) == 0 && fread(id, 1, 6, f) == 6) {
+    ok = 1;
+    for(int i = 0; i < 6; i++)
+      if(!isupper((unsigned char)id[i]) && !isdigit((unsigned char)id[i])) ok = 0;
+  }
+  fclose(f);
+  id[6] = 0;
+  return ok ? 0 : -1;
+}
+
+/* GameTDB's language folders to try, from the ID's region letter */
+static const char *const *tdb_regions(char r) {
+  static const char *const us[] = {"US", "EN", NULL}, *const ja[] = {"JA", NULL}, *const en[] = {"EN", "US", NULL},
+                           *const de[] = {"DE", "EN", NULL}, *const fr[] = {"FR", "EN", NULL},
+                           *const es[] = {"ES", "EN", NULL}, *const it[] = {"IT", "EN", NULL},
+                           *const ko[] = {"KO", "EN", NULL}, *const nl[] = {"NL", "EN", NULL};
+  switch(r) {
+  case 'E': case 'N': return us;
+  case 'J': return ja;
+  case 'D': return de;
+  case 'F': return fr;
+  case 'S': return es;
+  case 'I': return it;
+  case 'K': case 'Q': case 'T': return ko;
+  case 'H': return nl;
+  default: return en;
+  }
+}
+
+/* 0 = saved, -1 = GameTDB has none, -2 = couldn't ask (try again next time) */
+static int find_disc_scan(const char *disc, const char *out) {
+  char id[7];
+  if(disc_id(disc, id) != 0) {
+    logl("no game ID in %s", disc);
+    return -1;
+  }
+  char part[1100], final[1100], url[300];
+  snprintf(part, sizeof part, "%s.part", out);
+  int unreachable = 0;
+  for(const char *const *lc = tdb_regions(id[3]); *lc; lc++) {
+    FileSink fs;
+    memset(&fs, 0, sizeof fs);
+    if(!(fs.f = fopen(part, "wb"))) return -1;
+    snprintf(url, sizeof url, "https://art.gametdb.com/wii/disc/%s/%s.png", *lc, id);
+    int st = http_get(url, file_sink, &fs);
+    fclose(fs.f);
+    logl("gametdb %s %s: %d, %lu bytes", id, *lc, st, (unsigned long)fs.total);
+    if(st == 200 && fs.kind == 1 && fs.total >= 100) {
+      snprintf(final, sizeof final, "%s.png", out);
+      return rename(part, final);
+    }
+    if(st != 404) unreachable = 1;
+    unlink(part);
+  }
+  return unreachable ? -2 : -1;
+}
+
+/* ------------------------------------------------------------------------ */
+
 typedef struct {
+  char type;            /* G box art, L logo, T disc scan */
   char repo[128];
   char out[900];
   char rom[600];
@@ -659,7 +774,7 @@ int main(void) {
   while(jobs && fgets(line, sizeof line, f)) {
     size_t l = strlen(line);
     while(l && (line[l - 1] == '\n' || line[l - 1] == '\r')) line[--l] = 0;
-    if(line[0] != 'G' || line[1] != '\t') continue;
+    if((line[0] != 'G' && line[0] != 'L' && line[0] != 'T') || line[1] != '\t') continue;
     char *a = line + 2, *b = strchr(a, '\t'), *c = b ? strchr(b + 1, '\t') : NULL;
     if(!b || !c) continue;
     *b++ = 0;
@@ -670,6 +785,7 @@ int main(void) {
       if(!nj) break;
       jobs = nj;
     }
+    jobs[n].type = line[0];
     snprintf(jobs[n].repo, sizeof jobs[n].repo, "%s", a);
     snprintf(jobs[n].out, sizeof jobs[n].out, "%s", b);
     snprintf(jobs[n].rom, sizeof jobs[n].rom, "%s", c);
@@ -700,8 +816,14 @@ int main(void) {
     if(exists(p)) continue;
     parent_dirs(p);
     tried++;
-    if(find_cover(jobs[i].repo, jobs[i].rom, jobs[i].out) == 0) found++;
-    else touch(p);
+    int r;
+    if(jobs[i].type == 'T') r = find_disc_scan(jobs[i].rom, jobs[i].out);
+    else r = find_cover(jobs[i].repo, jobs[i].type == 'L' ? "Named_Logos" : "Named_Boxarts", jobs[i].rom, jobs[i].out);
+    if(r == 0) {
+      if(jobs[i].type == 'G') found++;
+    } else if(r != -2) {
+      touch(p);
+    }
     usleep(50000);   /* gentle on the network and the servers */
   }
   status("done %d %d %ld", found, n, (long)time(NULL));

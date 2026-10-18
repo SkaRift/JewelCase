@@ -29,6 +29,10 @@
 - **Automatic box art.** Covers download from the
   [libretro thumbnail collection](https://github.com/libretro-thumbnails) and are matched by
   file name, ignoring region tags and punctuation. Your own art always takes priority.
+- **Labels, not boxes.** Cartridge labels show the box art without the box's system banner
+  and ratings. Discs are printed edge to edge with the art and the game's title logo, and
+  GameCube and Wii games get a scan of their real disc from [GameTDB](https://www.gametdb.com),
+  found by the game ID in the disc image.
 - **Standalone emulators first.** Jewel Case starts each game in a dedicated PS5 emulator
   app when you have one installed, and falls back to RetroArch with a matching core.
 - **Details screen** for each game: its emulator, when you last played it, the file, its
@@ -123,8 +127,9 @@ Built on [ps5-native-app-boilerplate](https://github.com/blackbearreloaded/ps5-n
 and the [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk), with SDL2, cJSON, stb,
 dr_mp3 and the Poppins font. The cartridges, cards and discs are rendered from CC BY 4.0 models by
 Steven-Bennis, HippoStance, Karolina D, Vxcl, Pcwer, crocoman2019 and enjoyboy
-([credits](assets/media/CREDITS.md)). Box art comes from
-[libretro-thumbnails](https://github.com/libretro-thumbnails). Thanks to the etaHEN and
+([credits](assets/media/CREDITS.md)). Box art and logos come from
+[libretro-thumbnails](https://github.com/libretro-thumbnails), GameCube and Wii disc scans from
+[GameTDB](https://www.gametdb.com). Thanks to the etaHEN and
 ShadowMountPlus developers and to the authors of every emulator listed above. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
