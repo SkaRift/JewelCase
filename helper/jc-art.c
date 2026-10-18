@@ -134,8 +134,13 @@ int sceHttp2GetStatusCode(int, int*);
 int sceHttp2ReadData(int, void*, size_t);
 int sceHttp2SetAutoRedirect(int, int);
 int sceHttp2SetRecvTimeOut(int, uint32_t);
+int sceHttp2SslDisableOption(int, uint32_t);
 
 static int g_pool = -1, g_ssl = -1, g_http = -1, g_tmpl = -1;
+/* a second template without the certificate checks, used only when HTTPS fails with them: a
+ * payload often can't reach the console's certificate store. What comes down is public
+ * pictures and file lists, nothing that runs. 0: not tried, 1: in use, -1: no help */
+static int g_tmpl_nv = -1, g_nv_state;
 
 static int http_init(void) {
   sceNetInit();
@@ -150,7 +155,20 @@ static int http_init(void) {
   return 0;
 }
 
+static int nv_template(void) {
+  if(g_tmpl_nv >= 0) return g_tmpl_nv;
+  g_tmpl_nv = sceHttp2CreateTemplate(g_http, AGENT, 3, 1);
+  if(g_tmpl_nv < 0) return -1;
+  sceHttp2SetAutoRedirect(g_tmpl_nv, 1);
+  sceHttp2SetRecvTimeOut(g_tmpl_nv, 60 * 1000000u);
+  /* server certificate, name, expiry and known-CA checks */
+  int r = sceHttp2SslDisableOption(g_tmpl_nv, 0x01 | 0x04 | 0x08 | 0x10 | 0x20);
+  logl("https: template without certificate checks: %d (option 0x%08x)", g_tmpl_nv, (unsigned)r);
+  return g_tmpl_nv;
+}
+
 static void http_fini(void) {
+  if(g_tmpl_nv >= 0) sceHttp2DeleteTemplate(g_tmpl_nv);
   if(g_tmpl >= 0) sceHttp2DeleteTemplate(g_tmpl);
   if(g_http >= 0) sceHttp2Term(g_http);
   if(g_ssl >= 0) sceSslTerm(g_ssl);
@@ -159,11 +177,41 @@ static void http_fini(void) {
 
 static char g_chunk[CHUNK];
 
+static int g_http_errors;   /* failures logged in full, so the log shows why without filling up */
+
+static int http_get_with(int tmpl, const char *url, sink_fn sink, void *ctx);
+
 static int http_get(const char *url, sink_fn sink, void *ctx) {
-  int req = sceHttp2CreateRequestWithURL(g_tmpl, "GET", url, 0);
-  if(req < 0) return -1;
+  int https = !strncmp(url, "https:", 6);
+  int st = http_get_with(g_nv_state == 1 && https ? g_tmpl_nv : g_tmpl, url, sink, ctx);
+  if(st == -1 && https && g_nv_state == 0) {
+    /* HTTPS didn't connect: once, the same without the certificate checks */
+    g_nv_state = -1;
+    int t = nv_template();
+    if(t >= 0) {
+      int st2 = http_get_with(t, url, sink, ctx);
+      logl("https: without certificate checks: %d", st2);
+      if(st2 != -1) {
+        g_nv_state = 1;
+        logl("https: the certificate checks fail on this console; downloading without them from now on");
+        return st2;
+      }
+    }
+  }
+  return st;
+}
+
+static int http_get_with(int tmpl, const char *url, sink_fn sink, void *ctx) {
+  int req = sceHttp2CreateRequestWithURL(tmpl, "GET", url, 0);
+  if(req < 0) {
+    if(g_http_errors++ < 12) logl("http: create request for %s: 0x%08x", url, (unsigned)req);
+    return -1;
+  }
   int status = -1;
-  if(sceHttp2SendRequest(req, NULL, 0) || sceHttp2GetStatusCode(req, &status)) {
+  int sr = sceHttp2SendRequest(req, NULL, 0);
+  int gr = sr ? 0 : sceHttp2GetStatusCode(req, &status);
+  if(sr || gr) {
+    if(g_http_errors++ < 12) logl("http: %s: send 0x%08x, status 0x%08x", url, (unsigned)sr, (unsigned)gr);
     sceHttp2DeleteRequest(req);
     return -1;
   }
