@@ -9,6 +9,7 @@
  *   jewelcase-scan 1
  *   <depth>\t<path>
  *   M\t<path>                       create this folder (and its parents) first
+ *   C\t<from>\t<to>                  copy a file (a guide Jewel Case wrote in /data)
  * Index (/data/jewelcase-index.txt):
  *   jewelcase-index 1
  *   D\t<path>                       a folder
@@ -159,6 +160,21 @@ main(void) {
     char *tab = strchr(line, '\t');
     if(!tab) continue;
     *tab = 0;
+    if(line[0] == 'C') {
+      char *from = tab + 1, *to = strchr(from, '\t');
+      if(!to) continue;
+      *to++ = 0;
+      FILE *a = fopen(from, "rb"), *b = a ? fopen(to, "wb") : NULL;
+      if(a && b) {
+        char buf[8192];
+        size_t k;
+        while((k = fread(buf, 1, sizeof buf, a)) > 0) fwrite(buf, 1, k, b);
+      }
+      if(b) fclose(b);
+      if(a) fclose(a);
+      chmod(to, 0666);
+      continue;
+    }
     if(line[0] == 'M') {
       /* make a folder Jewel Case can't make from inside its sandbox */
       char *p = tab + 1;

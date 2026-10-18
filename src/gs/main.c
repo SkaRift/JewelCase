@@ -4485,10 +4485,20 @@ static void draw_settings(void) {
 static void create_system_folders(void) {
     char root[600], rp[1300];
     scopy(root, sizeof(root), g_rom_folder);
-    real_path(root, rp, sizeof(rp));
-    mkdir(rp, 0777);
-    int made = 0, had = 0, failed = 0;
+    /* a drive outside /data: the app's own view of it is sandboxed, so the folder
+     * scanner (outside the sandbox) makes the folders there, every time */
+    int outside = 0;
+#ifdef GS_NATIVE
+    outside = strncmp(root, "/data/", 6) != 0;
+#endif
     g_scan_mkdirs[0] = 0;
+    if (outside) {
+        snprintf(g_scan_mkdirs, sizeof(g_scan_mkdirs), "M\t%s\n", root);
+    } else {
+        real_path(root, rp, sizeof(rp));
+        mkdir(rp, 0777);
+    }
+    int made = 0, had = 0, failed = 0;
     static char guide[16384];
     size_t gl = (size_t)snprintf(guide, sizeof(guide),
         "Jewel Case: put each system's games in its folder.\n"
@@ -4499,16 +4509,20 @@ static void create_system_folders(void) {
         if (!sy->nfolders) continue;
         char path[700];
         snprintf(path, sizeof(path), "%s/%s", root, sy->folders[0]);
-        real_path(path, rp, sizeof(rp));
-        struct stat st;
-        if (stat(rp, &st) == 0 && S_ISDIR(st.st_mode)) had++;
-        else if (is_dir(path)) had++;
-        else if (mkdir(rp, 0777) == 0) made++;
-        else {
-            failed++;
-            char line[720];
-            snprintf(line, sizeof(line), "M\t%s\n", path);
-            strncat(g_scan_mkdirs, line, sizeof(g_scan_mkdirs) - strlen(g_scan_mkdirs) - 1);
+        if (outside) {
+            if (is_dir(path)) had++;
+            else {
+                char line[720];
+                snprintf(line, sizeof(line), "M\t%s\n", path);
+                strncat(g_scan_mkdirs, line, sizeof(g_scan_mkdirs) - strlen(g_scan_mkdirs) - 1);
+                failed++;   /* until the scanner has made it */
+            }
+        } else {
+            real_path(path, rp, sizeof(rp));
+            struct stat st;
+            if (stat(rp, &st) == 0 && S_ISDIR(st.st_mode)) had++;
+            else if (mkdir(rp, 0777) == 0) made++;
+            else failed++;
         }
         char exts[200] = "";
         for (int k = 0; k < sy->nexts; k++) {
@@ -4519,9 +4533,15 @@ static void create_system_folders(void) {
             gl += (size_t)snprintf(guide + gl, sizeof(guide) - gl, "%-10s %s%s(%s)\n", sy->folders[0], sy->name,
                                    sy->folder_games ? ", one folder per game " : " ", exts);
     }
-#ifdef GS_NATIVE
-    if (failed) {
-        /* outside the sandbox: the scanner makes them, and the tabs are rebuilt */
+    char gp[700];
+    snprintf(gp, sizeof(gp), "%s/_Jewel Case folder guide.txt", root);
+    if (outside) {
+        /* the guide: written in /data, copied there by the scanner */
+        const char *tmp = USER_DIR "/folder-guide.txt";
+        write_file(tmp, guide);
+        char line[1500];
+        snprintf(line, sizeof(line), "C\t%s\t%s\n", tmp, gp);
+        strncat(g_scan_mkdirs, line, sizeof(g_scan_mkdirs) - strlen(g_scan_mkdirs) - 1);
         busy_frame("Creating the folders...");
         scan_everything();
         load_recent();
@@ -4534,18 +4554,17 @@ static void create_system_folders(void) {
             snprintf(path, sizeof(path), "%s/%s", root, g_sys[i].folders[0]);
             if (is_dir(path)) now++;
         }
-        made += SDL_max(0, now - had - made);
-        failed = SDL_max(0, failed - (now - had));
+        made = SDL_max(0, now - had);
+        failed = SDL_max(0, failed - made);
+    } else {
+        write_file(gp, guide);
     }
-#endif
     g_scan_mkdirs[0] = 0;
-    char gp[700];
-    snprintf(gp, sizeof(gp), "%s/_Jewel Case folder guide.txt", root);
-    if (write_file(gp, guide) != 0) write_file("/data/jewelcase/_Jewel Case folder guide.txt", guide);
     if (failed && !made && !had)
         open_modal("Couldn't create the folders",
                    "The PS5 didn't let Jewel Case create folders in %s.\n"
-                   "Create them over FTP instead, named like nes, snes, n64, gb, gba, nds, psx, ps2, gc, wii, switch.",
+                   "Is the drive plugged in? You can also create them over FTP, named like nes, snes, n64, gb, "
+                   "gba, nds, psx, ps2, gc, wii, switch.",
                    root);
     else
         flash("%d folders created in %s, %d were already there%s", made, root, had, failed ? " (some failed)" : "");
