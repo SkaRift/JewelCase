@@ -139,8 +139,8 @@ switch for automatic downloads.
 
 SCREENSHOTS
 -----------
-The details screen (Square) shows each game's title screen and an in-game
-screenshot (libretro-thumbnails) behind it. They download after the
+The details screen (Square) shows an in-game screenshot of the game
+(libretro-thumbnails; its title screen when there's none) behind it. They download after the
 covers, into /data/jewelcase/covers/<system>/snaps and titles. Square on the details screen shows the file info.
 
 

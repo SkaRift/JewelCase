@@ -4374,8 +4374,8 @@ static void det_load(Game *g) {
         free(txt);
         g_dx.have_info = 1;
     }
-    /* the title screen, then the in-game screenshot */
-    for (int k = 2; k >= 1; k--) {
+    /* one picture, held still: the in-game screenshot, or the title screen when there's none */
+    for (int k = 1; k <= 2 && !g_dx.nshots; k++) {
         info_base(g, k, b, sizeof(b));
         static const char *const ext[] = {".png", ".jpg"};
         for (int e = 0; e < 2; e++) {
@@ -4395,7 +4395,7 @@ static void det_load(Game *g) {
     }
 }
 
-/* the screenshots, full screen behind the floor, dimmed; one fades into the next */
+/* the screenshot, full screen behind the floor, dimmed */
 /* draws the whole background of the details screen (the normal one, or the
  * screenshot backdrop over it) */
 static void draw_det_backdrop(Game *g, Uint8 a) {

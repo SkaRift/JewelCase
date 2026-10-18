@@ -37,8 +37,8 @@
   [GameTDB](https://www.gametdb.com) when there is one, found by the game ID in the disc image.
 - **Standalone emulators first.** Jewel Case starts each game in a dedicated PS5 emulator
   app when you have one installed, and falls back to RetroArch with a matching core.
-- **Details screen** for each game: its title screen and an in-game screenshot fading behind it
-  (from libretro-thumbnails), its emulator, version and when you last played it. Square shows the
+- **Details screen** for each game: an in-game screenshot behind it (from
+  libretro-thumbnails, or its title screen when there's none), its emulator, version and when you last played it. Square shows the
   file, region and size.
 - **Updates and DLC** sit with their game instead of showing as extra games. The game's
   version comes from its file name, and an amber or green chip shows whether its update and DLC
