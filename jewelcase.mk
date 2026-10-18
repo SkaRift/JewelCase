@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 PACBREW_PACKAGES ?= sdl2
-# LaunchBox is turned off for now: `make LAUNCHBOX=1` builds it in (JC_LAUNCHBOX) and ships the data
-LAUNCHBOX ?= 0
+# LaunchBox (game info, disc scans, more box art): `make LAUNCHBOX=0` builds without it
+LAUNCHBOX ?= 1
 APP_INCLUDE_PATHS ?= include
 # launchbox/: the LaunchBox game data shipped in the app (tools/launchbox_pack.py), when it has been made
 APP_ASSETS ?= $(if $(filter 1,$(LAUNCHBOX)),$(if $(wildcard launchbox/VERSION),launchbox,),)

@@ -124,10 +124,13 @@ Cartridge labels show the box art without the box's system banner and
 ratings. Discs show the art edge to edge, with a silver rim, a clear hub and, on
 PS1, PS2 and GameCube discs, the system's band. Each has the game's title logo (also
 from libretro-thumbnails, in /data/jewelcase/covers/<system>/logos).
-GameCube and Wii discs use a scan of the real disc when there is one, from
+Discs use a scan of the real disc when there is one: from the LaunchBox
+Games Database for every disc system, then, for GameCube and Wii, from
 GameTDB (art.gametdb.com), found by the game ID inside the disc image
-(ISO, GCM, WBFS, CISO and RVZ files; not GCZ). The libretro collection has
-no Switch covers: add your own art for those for now.
+(ISO, GCM, WBFS, CISO and RVZ files; not GCZ). The LaunchBox game list
+comes with the app (only the systems Jewel Case supports), so only the
+pictures for your own games are downloaded. Systems the libretro collection
+doesn't cover, like Switch, get their box art from LaunchBox too.
 Your own disc image for any disc system: put a .png or .jpg in a "discs"
 folder next to the game, named like the game file, or name it
 "<game>-disc.png" next to the game. It is used when no disc scan was
@@ -137,11 +140,14 @@ Settings: Download missing covers, Redownload all covers, and an on/off
 switch for automatic downloads.
 
 
-SCREENSHOTS
------------
-The details screen (Square) shows an in-game screenshot of the game
-(libretro-thumbnails; its title screen when there's none) behind it. They download after the
-covers, into /data/jewelcase/covers/<system>/snaps and titles. Square on the details screen shows the file info.
+GAME INFO AND SCREENSHOTS
+-------------------------
+The details screen (Square) shows each game's year, genre, developer,
+players and description from the LaunchBox Games Database, and an in-game
+screenshot (libretro-thumbnails; its title screen when there's none)
+behind it. They
+download after the covers, into /data/jewelcase/covers/<system>/info,
+snaps and titles. Square on the details screen shows the file info.
 
 
 MUSIC
@@ -219,7 +225,11 @@ Built with and thanks to:
   stb_image_write (public domain), dr_mp3 (public domain / MIT-0),
   Poppins font (SIL Open Font License)
   Box art, logos and screenshots: the libretro-thumbnails project
-  Disc scans: GameTDB (gametdb.com)
+  Game info, disc scans and more box art: the LaunchBox Games Database
+  (gamesdb.launchbox-app.com); a reduced copy of its game list is included
+  and GameTDB (gametdb.com)
+  miniz (MIT, (c) Rich Geldreich, RAD Game Tools, Valve), to unpack
+  the LaunchBox game list
   Cartridge, card and disc renders: 3D models by Steven-Bennis (SNES),
   HippoStance (NES), Karolina D (Game Boy), Vxcl (GBA), Pcwer (DS),
   crocoman2019 (Switch) and enjoyboy (disc), CC BY 4.0, and ejpman

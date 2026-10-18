@@ -229,6 +229,15 @@ static int find_lb_image(const char *platform, const char *rom, const char *out,
   memset(&fs, 0, sizeof fs);
   if(!(fs.f = fopen(part, "wb"))) return -2;
   int st = http_get(url, file_sink, &fs);
+  if(st != 200 && st != 404) {
+    /* nothing over HTTPS: the same image over plain HTTP */
+    logl("launchbox: %s over https: %d, trying http", file, st);
+    snprintf(url, sizeof url, "http://images.launchbox-app.com/%s", enc);
+    rewind(fs.f);
+    fs.total = fs.tl = 0;
+    fs.checked = fs.kind = 0;
+    st = http_get(lb_url("JC_LB_IMG2", url), file_sink, &fs);
+  }
   fclose(fs.f);
   logl("launchbox: %s -> %s: %d, %lu bytes", rom, file, st, (unsigned long)fs.total);
   if(st == 200 && (fs.kind == 1 || fs.kind == 2) && fs.total >= 100) {

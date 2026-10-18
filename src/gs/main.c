@@ -2562,11 +2562,10 @@ static int has_gametdb(const System *s) {
 }
 
 /* each system's platform name in the LaunchBox Games Database (game info, and disc scans) */
-/* LaunchBox (game info, disc scans, box art for systems libretro lacks): turned off for now.
- * Everything for it stays in place (this table, jc-lbdb.c, tools/launchbox_pack.py): build with
- * -DJC_LAUNCHBOX=1 and `make LAUNCHBOX=1` (which ships the launchbox/ data) to bring it back. */
+/* LaunchBox (game info, disc scans, box art for systems libretro lacks). `make LAUNCHBOX=0`
+ * (JC_LAUNCHBOX=0) builds without it; the code and tools/launchbox_pack.py stay either way. */
 #ifndef JC_LAUNCHBOX
-#define JC_LAUNCHBOX 0
+#define JC_LAUNCHBOX 1
 #endif
 #if JC_LAUNCHBOX
 #define LB_CREDIT "  Game info, box art and disc scans: the LaunchBox Games Database; disc scans: GameTDB\n\n"
@@ -2995,13 +2994,42 @@ static void stage_launchbox(void) {
     mkdir(rp, 0777);
     real_path(COVER_DIR "/lb", rp, sizeof(rp));
     mkdir(rp, 0777);
+    /* the database's date, and a revision for changes in how Jewel Case uses it (2: earlier
+     * misses are looked for again) */
+    have[strcspn(have, "\r\n")] = 0;
+    char key[96];
+    snprintf(key, sizeof(key), "%s r2\n", have);
     char *was = read_file(COVER_DIR "/lb/VERSION", NULL);
-    int fresh = !was || strcmp(was, have);
+    int fresh = !was || strcmp(was, key);
     if (fresh) {
         /* 1.1 and earlier downloaded the whole database instead */
         remove_file(COVER_DIR "/launchbox.idx");
         remove_file(COVER_DIR "/launchbox-info.txt");
         remove_file(COVER_DIR "/launchbox.fail");
+        /* a new database: look again for what earlier runs didn't find (the "not found"
+         * markers they left would stop it), for every game on a LaunchBox system */
+        int cleared = 0;
+        for (int s = 0; s < g_nsys; s++) {
+            if (!launchbox_platform(&g_sys[s])) continue;
+            for (int k = 0; k < g_sys[s].ngames; k++) {
+                Game *g = &g_sys[s].games[k];
+                char b[1100], m[1200];
+                if (!g->art[0]) {
+                    cover_base(g, b, sizeof(b));
+                    snprintf(m, sizeof(m), "%s.none", b);
+                    if (file_exists(m)) { remove_file(m); cleared++; }
+                }
+                if (wants_extras(g)) {
+                    extra_base(g, 1, b, sizeof(b));
+                    snprintf(m, sizeof(m), "%s.none", b);
+                    if (file_exists(m)) { remove_file(m); cleared++; }
+                }
+                info_base(g, 0, b, sizeof(b));
+                snprintf(m, sizeof(m), "%s.none", b);
+                if (file_exists(m)) { remove_file(m); cleared++; }
+            }
+        }
+        logf_("launchbox: database %s is new here, %d earlier misses to try again", have, cleared);
     }
     int copied = 0;
     for (int s = 0; s < g_nsys; s++) {
@@ -3015,7 +3043,7 @@ static void stage_launchbox(void) {
         if (copy_plain(p, q) == 0) copied++;
         else logf_("launchbox: no %s in the app", p);
     }
-    if (fresh) write_file(COVER_DIR "/lb/VERSION", have);
+    if (fresh) write_file(COVER_DIR "/lb/VERSION", key);
     if (copied) logf_("launchbox: %d system(s) of database %s copied", copied, have);
     free(have);
     free(was);
@@ -5814,13 +5842,11 @@ static void handle(int in, SDL_Window *win) {
     case IN_JUMP_FWD:
         select_game(g_sel_game + 10);
         break;
-    case IN_PREV:
-    case IN_UP:
+    case IN_PREV:   /* L1 / R1 switch systems (the D-pad's up and down do nothing here) */
         if (g_details) break;
         select_entry(g_sel_entry - 1);
         break;
     case IN_NEXT:
-    case IN_DOWN:
         if (g_details) break;
         select_entry(g_sel_entry + 1);
         break;
