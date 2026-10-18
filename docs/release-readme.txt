@@ -71,6 +71,10 @@ from libretro-thumbnails, in /data/jewelcase/covers/<system>/logos).
 GameCube and Wii discs use a scan of the real disc from GameTDB
 (art.gametdb.com) when there is one, found by the game ID inside the disc
 image (ISO, GCM, WBFS, CISO and RVZ files; not GCZ).
+Your own disc image for any disc system: put a .png or .jpg in a "discs"
+folder next to the game, named like the game file, or name it
+"<game>-disc.png" next to the game. It is used when no disc scan was
+downloaded. Make it a square picture of the whole disc.
 
 Settings: Download missing covers, Redownload all covers, and an on/off
 switch for automatic downloads.

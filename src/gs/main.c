@@ -2405,6 +2405,17 @@ static int extra_of(Game *g, int kind, char *out, size_t cap) {
     return file_exists(none) ? -1 : 0;
 }
 
+/* your own disc image: <game folder>/discs/<name>.png or .jpg, or <name>-disc.png / .jpg
+ * next to the game. Used when no disc scan was downloaded. */
+static int user_disc_of(Game *g, char *out, size_t cap) {
+    static const char *const fmt[] = {"%s/discs/%s.png", "%s/discs/%s.jpg", "%s/%s-disc.png", "%s/%s-disc.jpg"};
+    for (int i = 0; i < 4; i++) {
+        snprintf(out, cap, fmt[i], g->dir, g->stem);
+        if (file_exists(out)) return 1;
+    }
+    return 0;
+}
+
 static int wants_extras(Game *g) {
     const SysLook *l = look_of(&g_sys[g->sys]);
     return l && l->repo && MEDIA_TPL[tpl_of(&g_sys[g->sys])].kind == 1;
@@ -2908,6 +2919,7 @@ static void build_media(Game *g) {
     if (t->kind == 1 && wants_extras(g)) {
         char ep[1200];
         if (has_disc_scans(s) && extra_of(g, 1, ep, sizeof(ep)) == 1) scan = load_art_surface(ep, t->ly * 2, t->ly * 2);
+        if (!scan && user_disc_of(g, ep, sizeof(ep))) scan = load_art_surface(ep, t->ly * 2, t->ly * 2);
         if (!scan && art && extra_of(g, 0, ep, sizeof(ep)) == 1) {
             SDL_Rect b = disc_title_band(t->lx, t->ly);
             logo = load_art_surface(ep, b.w, (int)(b.h * 0.92f));
