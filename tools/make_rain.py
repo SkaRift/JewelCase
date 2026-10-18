@@ -86,17 +86,17 @@ def make(seconds, seed, rain, drops, wind):
         hiss = periodic_noise(n, rng, band(500, 4200, 0.6))
         body = periodic_noise(n, rng, band(450, 1700, 0.6))
         swell = 0.8 + 0.2 * lfo(n, 3, ch * 0.7) * lfo(n, 7, 1.3 + ch)
-        out[ch] += rain * (0.30 * hiss + 0.24 * body) * swell
+        out[ch] += rain * (0.07 * hiss + 0.05 * body) * swell   # a faint wet hiss
 
     # individual drops, denser when the rain swells
-    dens = 0.6 + 0.4 * lfo(n, 3)
-    count = int(seconds * 70 * drops)
+    dens = 0.75 + 0.25 * lfo(n, 3)
+    count = int(seconds * 11 * drops)          # scattered drops, not a downpour
     for _ in range(count):
         pos = int(rng.integers(0, n))
         if rng.random() > dens[pos]:
             continue
-        near = rng.random() ** 2.2                    # most drops far and quiet
-        amp = 0.02 + 0.22 * near
+        near = rng.random() ** 1.6                    # some close, most a little further off
+        amp = 0.05 + 0.30 * near
         pan = rng.uniform(-0.9, 0.9)
         s = drop_sound(rng, rng.random()) * amp
         add_wrapped(out[0], pos, s * np.sqrt(0.5 * (1 - pan)))
@@ -107,11 +107,11 @@ def make(seconds, seed, rain, drops, wind):
         gust = lfo(n, 2, 0.4) ** 2 * 0.7 + 0.3 * lfo(n, 5, 2.0)
         for ch in range(2):
             w = periodic_noise(n, rng, band(160, 700, 1.2))
-            out[ch] += wind * 0.10 * w * (0.25 + 0.75 * gust * (0.8 + 0.2 * lfo(n, 4, ch * 1.9)))
+            out[ch] += wind * 0.05 * w * (0.25 + 0.75 * gust * (0.8 + 0.2 * lfo(n, 4, ch * 1.9)))
 
     # gentle, then even out: quiet enough to sit under the menu
     out = np.tanh(out * 1.4) / np.tanh(1.4)
-    out *= 10 ** (-30 / 20) / (np.sqrt((out ** 2).mean()) + 1e-9)   # about -30 dBFS: background
+    out *= 10 ** (-36 / 20) / (np.sqrt((out ** 2).mean()) + 1e-9)   # about -36 dBFS: light background
     peak = np.abs(out).max()
     if peak > 0.89:
         out *= 0.89 / peak
