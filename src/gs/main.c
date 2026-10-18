@@ -3775,6 +3775,9 @@ typedef struct {
     int nshots;
     int state;          /* which of the three files exist, to notice new ones */
     Uint32 checked;
+    /* the file facts, looked up once: file access on the console is slow, far
+     * too slow for every frame */
+    char size[40], cover_txt[120];
 } DetExtras;
 
 static DetExtras g_dx;
@@ -3804,11 +3807,26 @@ static void det_free(void) {
     memset(&g_dx, 0, sizeof(g_dx));
 }
 
+static void det_facts(Game *g) {
+    g_dx.size[0] = 0;
+    char rp[1200], cover[1200];
+    real_path(g->path, rp, sizeof(rp));
+    struct stat st;
+    if (stat(rp, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0)
+        fmt_size((long long)st.st_size, g_dx.size, sizeof(g_dx.size));
+    int cst = cover_of(g, cover, sizeof(cover));
+    if (g->art[0]) scopy(g_dx.cover_txt, sizeof(g_dx.cover_txt), "Your own art");
+    else if (cst == 1) scopy(g_dx.cover_txt, sizeof(g_dx.cover_txt), "Downloaded (libretro thumbnails)");
+    else if (cst == 0) scopy(g_dx.cover_txt, sizeof(g_dx.cover_txt), g_art_running ? "Downloading..." : "Not downloaded yet");
+    else scopy(g_dx.cover_txt, sizeof(g_dx.cover_txt), "None found");
+}
+
 static void det_load(Game *g) {
     det_free();
     g_dx.g = g;
     g_dx.state = det_state(g);
     g_dx.checked = SDL_GetTicks();
+    det_facts(g);
     char b[1100], p[1200];
     info_base(g, 0, b, sizeof(b));
     snprintf(p, sizeof(p), "%s.txt", b);
@@ -3859,14 +3877,23 @@ static void det_load(Game *g) {
 }
 
 /* the screenshots, full screen behind the floor, dimmed; one fades into the next */
+/* draws the whole background of the details screen (the normal one, or the
+ * screenshot backdrop over it) */
 static void draw_det_backdrop(Game *g, Uint8 a) {
     if (g_dx.g != g) det_load(g);
-    else if (SDL_GetTicks() - g_dx.checked > 2000) {
+    else if (g_art_running && SDL_GetTicks() - g_dx.checked > 3000) {
         /* still downloading: show what arrives */
         g_dx.checked = SDL_GetTicks();
         if (det_state(g) != g_dx.state) det_load(g);
+        else det_facts(g);
     }
-    if (!g_dx.nshots || !T_bg) return;
+    if (!T_bg) {
+        fill_rect(0, 0, SCREEN_W, SCREEN_H, 0x12141f, 255);
+        return;
+    }
+    int opaque = g_dx.nshots && g_dx.comp[0] && a == 255;
+    if (!opaque) SDL_RenderCopy(R, T_bg, NULL, NULL);
+    if (!g_dx.nshots) return;
     /* the backdrops, put together once (drawing a scaled, blended screenshot and
      * the floor every frame was far too slow) */
     if (g_dx.comp_accent != g_bg_accent)
@@ -4056,19 +4083,10 @@ static void draw_details(Uint32 accent) {
     }
 
     /* facts */
-    char region[100], size[40] = "", cover[1200], cover_txt[120];
+    char region[100];
     region_of(g->stem, region, sizeof(region));
-    {
-        char rp[1200];
-        real_path(g->path, rp, sizeof(rp));
-        struct stat st;
-        if (stat(rp, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0) fmt_size((long long)st.st_size, size, sizeof(size));
-    }
-    int cst = cover_of(g, cover, sizeof(cover));
-    if (g->art[0]) scopy(cover_txt, sizeof(cover_txt), "Your own art");
-    else if (cst == 1) scopy(cover_txt, sizeof(cover_txt), "Downloaded (libretro thumbnails)");
-    else if (cst == 0) scopy(cover_txt, sizeof(cover_txt), g_art_running ? "Downloading..." : "Not downloaded yet");
-    else scopy(cover_txt, sizeof(cover_txt), "None found");
+    if (g_dx.g != g) det_load(g);
+    const char *size = g_dx.size, *cover_txt = g_dx.cover_txt;
     const char *base = strrchr(g->path, '/');
     base = base ? base + 1 : g->path;
     struct { const char *k; const char *v; } facts[] = {
@@ -4413,10 +4431,10 @@ static void start_music(void) {
 static void render(void) {
     Uint32 accent = entry_accent(g_sel_entry);
     make_background_for(g_nentries ? (g_entries[g_sel_entry].kind == 1 ? g_sys[g_entries[g_sel_entry].sys].color : accent) : 0x2f8fd8);
-    if (T_bg) SDL_RenderCopy(R, T_bg, NULL, NULL);
-    else fill_rect(0, 0, SCREEN_W, SCREEN_H, 0x12141f, 255);
-    if (g_details && entry_game(g_sel_game))
+    if (g_details && entry_count() > 0 && entry_game(g_sel_game))
         draw_det_backdrop(entry_game(g_sel_game), (Uint8)(255 * SDL_min(1.0f, g_det_t * 1.6f)));
+    else if (T_bg) SDL_RenderCopy(R, T_bg, NULL, NULL);
+    else fill_rect(0, 0, SCREEN_W, SCREEN_H, 0x12141f, 255);
     if (g_rain_on) draw_rain();
     draw_header();
     if (g_nentries == 0) {
@@ -5577,6 +5595,18 @@ int main(int argc, char **argv) {
             else if (!strcmp(tok, "emus")) in = IN_SETTINGS;
             else if (!strcmp(tok, "fav")) in = IN_FAV;
             else if (!strncmp(tok, "pos:", 4)) { g_pos = (float)atof(tok + 4); continue; }
+            else if (!strncmp(tok, "bench:", 6)) {   /* time N frames */
+                int nfr = atoi(tok + 6);
+                if (g_details) g_det_t = 1;
+                Uint64 t0 = SDL_GetPerformanceCounter();
+                for (int k = 0; k < nfr; k++) {
+                    render();
+                    SDL_RenderFlush(R);
+                }
+                double ms = (SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency() / SDL_max(1, nfr);
+                fprintf(stderr, "bench %s: %.2f ms per frame\n", g_details ? "details" : "carousel", ms);
+                continue;
+            }
             else if (!strncmp(tok, "takeoff:", 8)) {   /* the launch animation at a point, for screenshots */
                 g_launch_game = entry_game(g_sel_game);
                 g_launch_t = (float)atof(tok + 8);
