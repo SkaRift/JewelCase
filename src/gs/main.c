@@ -5482,11 +5482,16 @@ static void show_info(Game *g) {
             n += (size_t)snprintf(extra + n, sizeof(extra) - n, "  %.*s\n", l, p);
             p += l + (e ? 1 : 0);
         }
-        if (n < sizeof(extra))
-            snprintf(extra + n, sizeof(extra) - n, "%s",
-                     st == 1 ? "Jewel Case only sees these files. The emulator needs them installed once\n"
-                               "(from its own menu); after that you can delete them here to save space.\n"
-                             : "Marked installed in the emulator. You can delete the files here to save space.\n");
+        if (n < sizeof(extra)) {
+            if (st == 1)
+                snprintf(extra + n, sizeof(extra) - n,
+                         "To install: in the emulator, use its install option and pick the file from\n"
+                         "  %s\n"
+                         "then press Cross here. After that you can delete the file to save space.\n", g->dir);
+            else
+                snprintf(extra + n, sizeof(extra) - n,
+                         "Marked installed in the emulator. You can delete the files here to save space.\n");
+        }
     }
     LaunchCmd lc;
     if (build_launch(g, &lc) < 0) {

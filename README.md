@@ -44,6 +44,9 @@
   the LaunchBox Games Database, its title screen and an in-game screenshot fading behind it
   (from libretro-thumbnails), its emulator and when you last played it. Square shows the
   file, region and size.
+- **Updates and DLC** sit with their game instead of showing as extra games. The game's
+  version comes from its file name, and an amber or green chip shows whether its update and DLC
+  are installed in the emulator yet ([how it works](#updates-and-dlc)).
 - **Background music** (your own MP3s, shuffled) and a rain effect, both optional.
 - **Native app.** It has its own home-screen icon, installs with ShadowMountPlus, and needs no
   browser or Homebrew Launcher.
@@ -99,6 +102,36 @@ in a `covers` folder there.
 Music: put MP3 files in `/data/jewelcase/music`. Jewel Case creates this folder on first
 run.
 
+### Updates and DLC
+
+Switch and Wii U emulators need a game's update and DLC installed into their own storage
+once, from the emulator's menu. Jewel Case starts games; it doesn't install anything into an
+emulator. Keep the files next to the game:
+
+```
+/data/roms/switch/Super Mario Odyssey 1.0.nsp
+/data/roms/switch/Super Mario Odyssey 1.1 update.nsp
+```
+
+Jewel Case shows these as one game. It recognises updates and DLC by "update", "upd",
+"patch" or "DLC" in the name, or by the Switch title ID in brackets (an update's ends in
+`800`).
+
+To install one, with no extra copies:
+
+1. In the emulator, use its install option and pick the file straight from your Jewel Case
+   games folder. There's no need to copy it anywhere else first.
+2. In Jewel Case, open the game's details (□), press □ again for **File info**, then
+   **✕ Mark installed**.
+3. Optional: delete the update or DLC file from the games folder. The emulator keeps its
+   installed copy, and Jewel Case still shows **Update 1.1 installed**.
+
+Amber **Update 1.1 not installed** means the file is there but not marked yet. Green
+**Update 1.1 installed** means you've marked it. A newer update file turns it amber again
+until you mark that one too. Jewel Case can't look inside the emulator, so "installed" is
+whatever you marked; **✕ Mark not installed** undoes it. Marks are kept in
+`/data/jewelcase/installed.json`.
+
 ## Controls
 
 | Carousel | | Details screen | |
@@ -127,6 +160,8 @@ make host     # PC test build, needs SDL2 (build-host/jewelcase --fsroot <folder
 - PSXS5 and PS5SX2 don't accept a game at launch yet, so they open their own game list.
 - Cover matching works from file names, so heavily renamed files may get no cover. Add your
   own art for those.
+- Jewel Case can't install updates or DLC into an emulator, or check what the emulator has
+  installed. Install them from the emulator's own menu and mark them in File info.
 
 ## Credits
 

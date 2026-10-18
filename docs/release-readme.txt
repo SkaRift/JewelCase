@@ -57,6 +57,44 @@ more (see the guide).
 After adding games, use Settings > Rescan games (or restart Jewel Case).
 
 
+UPDATES AND DLC (SWITCH, WII U)
+-------------------------------
+Jewel Case starts games; it doesn't install anything into an emulator.
+Switch and Wii U emulators need a game's update and DLC installed into
+their own storage once, from the emulator's own menu.
+
+Keep the update and DLC files in the same folder as the game:
+
+    /data/roms/switch/Super Mario Odyssey 1.0.nsp
+    /data/roms/switch/Super Mario Odyssey 1.1 update.nsp
+
+Jewel Case shows them as one game, not three. It spots them by words like
+"update", "upd", "patch" or "DLC" in the file name, or by the Switch title
+ID in brackets (an update's ends in 800). An update with no game next to
+it is shown on its own.
+
+To install one, with no extra copies:
+  1. In the emulator, choose its "install files" option and pick the file
+     straight from your Jewel Case games folder (above). No need to copy
+     it anywhere else first.
+  2. In Jewel Case, open the game's details (Square), press Square again
+     for File info, then Cross: Mark installed.
+  3. Optional: delete the update / DLC file from the games folder to save
+     space. The emulator keeps its installed copy, and Jewel Case still
+     shows "Update 1.1 installed".
+
+What you see:
+  amber "Update 1.1 not installed"   the file is there, not marked yet
+  green "Update 1.1 installed"       you marked it (even if the file is gone)
+A newer update file (say 1.2) turns it amber again until you mark it.
+
+Jewel Case can't see inside the emulator, so "installed" means you marked
+it. Cross: Mark not installed in File info undoes it. The marks are kept in
+/data/jewelcase/installed.json. Versions come from file names
+("1.0", "v1.2.0", "[v131072]") and show on the details screen for any
+system.
+
+
 COVERS
 ------
 Covers come from the libretro thumbnail collection
@@ -150,6 +188,7 @@ FILES JEWEL CASE KEEPS
 Everything Jewel Case saves is in /data/jewelcase, outside the app folder,
 so installing an update never touches it:
   recent.json, favorites.json, ui-settings.json
+  installed.json   updates / DLC you marked as installed in an emulator
   jewelcase.json   (optional, advanced: your own folders and emulators)
   covers/          downloaded box art
   music/           your MP3s
