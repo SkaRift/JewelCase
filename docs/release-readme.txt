@@ -151,9 +151,11 @@ snaps and titles. Square on the details screen shows the file info.
 
 MUSIC
 -----
-Put MP3 files in /data/jewelcase/music. Jewel Case creates this folder
-the first time it runs. Songs play shuffled and looped while you browse,
-and fade out when a game starts.
+Jewel Case comes with a soft rain track (made by a program, not a
+recording, so there's nothing to license). To play your own music instead,
+put MP3 files in /data/jewelcase/music. Jewel Case creates this folder the
+first time it runs. Songs play shuffled and looped while you browse, and
+fade out when a game starts.
 Settings: music on/off, and volume.
 
 

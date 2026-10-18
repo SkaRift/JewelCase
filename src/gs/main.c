@@ -5289,7 +5289,7 @@ static void settings_row(int i, const char **label, const char **hint, char *val
         break;
     case SET_MUSIC:
         *label = "Background music";
-        *hint = "MP3s in /data/jewelcase/music, shuffled and looped";
+        *hint = "Rain, or your MP3s in /data/jewelcase/music, shuffled and looped";
         *icon = ICON_DISC;
         scopy(value, vcap, !g_music_on ? "Off" : music_playing() ? "On" : "On (no MP3s found)");
         break;

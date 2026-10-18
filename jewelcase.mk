@@ -7,7 +7,8 @@ APP_INCLUDE_PATHS ?= include
 # launchbox/: the LaunchBox game data shipped in the app (tools/launchbox_pack.py), when it has been made
 APP_ASSETS ?= $(if $(wildcard launchbox/VERSION),launchbox,)
 APP_DEFINITIONS ?= GS_NATIVE NDEBUG
-APP_ROOT_FILES ?= helper/jc-launch.elf helper/jc-scan.elf helper/jc-art.elf
+APP_ROOT_FILES ?= helper/jc-launch.elf helper/jc-scan.elf helper/jc-art.elf $(wildcard assets-music/music.mp3)
+# assets-music/music.mp3: the rain played when /data/jewelcase/music is empty (tools/make_rain.py)
 APP_LAPY_HELPER ?= 0
 # use ccache only when it is installed
 USE_CCACHE ?= $(if $(shell command -v ccache 2>/dev/null),1,0)
