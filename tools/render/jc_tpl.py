@@ -9,7 +9,7 @@ import numpy as np
 M = os.environ.get('MODELS', 'models')
 CONFIGS = {
     # view: axis index and sign looking FROM; up: axis index for image up
-    'wide': dict(model='snes_cartridge', axis=2, sign=1, up=1, label=('plane', None), rect=(0.215, 0.225, 0.80, 0.55)),
+    'wide': dict(model='snes_cartridge', axis=2, sign=1, up=1, label=('plane', None), rect=(0.215, 0.225, 0.80, 0.55), tint=(0.36, 0.35, 0.44)),
     'tall': dict(model='nes_cartridge', axis=1, sign=-1, up=2,
                  label=('uv', 'NESCartridge_baseColor.png', (0, 0, 1179, 2048))),
     'small': dict(model='gameboy_cartridge', axis=2, sign=1, up=1,
@@ -132,6 +132,16 @@ if kind == 'uv':
     m[..., 3] = 1
     m[ys, xs, :3] = 1
     np_img(mask_img, m)
+
+if 'tint' in cfg:
+    for o in meshes:
+        for sl in o.material_slots:
+            mat = sl.material
+            if mat and mat.use_nodes:
+                for n in mat.node_tree.nodes:
+                    if n.type == 'BSDF_PRINCIPLED' and not n.inputs['Base Color'].is_linked:
+                        n.inputs['Base Color'].default_value = (*cfg['tint'], 1)
+                        n.inputs['Roughness'].default_value = 0.6
 
 if 'body_color' in cfg:
     for o in meshes:

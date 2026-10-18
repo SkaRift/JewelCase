@@ -2867,7 +2867,7 @@ static SDL_Texture *disc_label(SDL_Surface *art, SDL_Surface *logo, int scan, in
     return t;
 }
 
-static void title_on_label(const char *title, int x, int y, int w, int h) {
+static void title_on_label_f(Font *f, const char *title, int x, int y, int w, int h) {
     char lines[3][200];
     /* up to 3 lines, centred */
     char rest[200];
@@ -2875,7 +2875,7 @@ static void title_on_label(const char *title, int x, int y, int w, int h) {
     int nl = 0;
     while (rest[0] && nl < 3) {
         char l1[200], l2[200];
-        int n = wrap2(&F_tile, rest, (float)w - 24, l1, l2);
+        int n = wrap2(f, rest, (float)w - 24, l1, l2);
         scopy(lines[nl++], 200, l1);
         if (n < 2) break;
         /* what's left after line 1 */
@@ -2886,16 +2886,20 @@ static void title_on_label(const char *title, int x, int y, int w, int h) {
         scopy(tmp, sizeof(tmp), p);
         scopy(rest, sizeof(rest), tmp);
         if (nl == 2) {
-            ellipsize(&F_tile, rest, (float)w - 24, lines[nl++], 200);
+            ellipsize(f, rest, (float)w - 24, lines[nl++], 200);
             break;
         }
     }
-    int total = nl * F_tile.line;
+    int total = nl * f->line;
     int ty = y + (h - total) / 2;
     for (int i = 0; i < nl; i++) {
-        float tw = text_width(&F_tile, lines[i]);
-        draw_text(&F_tile, x + (w - tw) / 2, ty + i * F_tile.line, lines[i], 0xffffff, 245);
+        float tw = text_width(f, lines[i]);
+        draw_text(f, x + (w - tw) / 2, ty + i * f->line, lines[i], 0xffffff, 245);
     }
+}
+
+static void title_on_label(const char *title, int x, int y, int w, int h) {
+    title_on_label_f(&F_tile, title, x, y, w, h);
 }
 
 #define REFL_FRACTION 0.36f
@@ -2982,7 +2986,17 @@ static void build_media(Game *g) {
 
     Uint32 col = accent_of(s->color);
     if (t->kind == 0) {
-        if (art) {
+        if (art && !strcmp(t->name, "wide")) {
+            /* SNES label: a black sticker with the art in a window left of centre
+             * and the title on the right, the way the real labels are laid out */
+            fill_rect(t->lx, t->ly, t->lw, t->lh, 0x111114, 255);
+            int ax = t->lx + (int)(t->lw * 0.18f), aw = (int)(t->lw * 0.53f);
+            int ay = t->ly + (int)(t->lh * 0.13f), ah = (int)(t->lh * 0.72f);
+            draw_art_fill(art, ax, ay, aw, ah);
+            fill_rect(t->lx + (int)(t->lw * 0.73f), ay, (int)(t->lw * 0.24f), 3, accent_of(s->color), 255);
+            title_on_label_f(&F_tiny, g->title, t->lx + (int)(t->lw * 0.71f) - 12, ay + 8, (int)(t->lw * 0.28f) + 24,
+                             (int)(ah * 0.6f));
+        } else if (art) {
             draw_art_fill(art, t->lx, t->ly, t->lw, t->lh);
         } else {
             /* blank label: system colour and the title */
