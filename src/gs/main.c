@@ -21,6 +21,7 @@
 #include <arpa/inet.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include <SDL.h>
 
@@ -2702,6 +2703,8 @@ static int floor_span(float x, float *top, float *bot) {
     return 1;
 }
 
+static SDL_Surface *g_bg_surf;   /* T_bg's pixels, for building the details backdrop off the main thread */
+
 static void make_background_for(Uint32 accent) {
     if (accent == g_bg_accent && T_bg) return;
     g_bg_accent = accent;
@@ -2774,7 +2777,8 @@ static void make_background_for(Uint32 accent) {
     }
     if (T_bg) SDL_DestroyTexture(T_bg);
     T_bg = SDL_CreateTextureFromSurface(R, s);
-    SDL_FreeSurface(s);
+    if (g_bg_surf) SDL_FreeSurface(g_bg_surf);   /* a worker using the old one holds its own reference */
+    g_bg_surf = s;
 }
 
 /* an image file as a surface, scaled down to fit max_w x max_h */
@@ -3798,12 +3802,14 @@ static void make_back(Game *g) {
     g->back = tgt;
 }
 
+static float g_spin_scale = 1;   /* drawing a turned game at this size (half while turning on the details screen) */
+
 /* one face (or a layer of the body) of a turned game: the texture on the plane
  * at depth zp, turned by angle a around the upright axis through cx */
 static void draw_spun_face(SDL_Texture *tex, int flip, float cx, float cy, float w, float h, float ca, float sa,
-                           float zp, Uint8 r, Uint8 g, Uint8 b, Uint8 alpha) {
+                           float zp, Uint8 r, Uint8 g, Uint8 b, Uint8 alpha, int edges) {
     enum { N = 16 };
-    const float F = 2400;    /* how far the eye is: perspective */
+    const float F = 2400 * g_spin_scale;    /* how far the eye is: perspective (scaled with the drawing) */
     float px[N + 1], top[N + 1], bot[N + 1], tu[N + 1];
     for (int j = 0; j <= N; j++) {
         float u = (float)j / N;
@@ -3817,24 +3823,30 @@ static void draw_spun_face(SDL_Texture *tex, int flip, float cx, float cy, float
     }
     /* each strip its own quad, a hair wider than its share so no seams show */
     SDL_Vertex v[4 * N];
-    int idx[6 * N];
+    int idx[6 * N], ni = 0;
     SDL_Color col = {r, g, b, alpha};
     for (int j = 0; j < N; j++) {
         float dir = px[j + 1] >= px[j] ? 1.0f : -1.0f;
-        float x1 = px[j + 1] + 0.7f * dir;
+        /* opaque faces overlap a hair so no seams show; see-through ones (the reflection) mustn't,
+         * or every overlap shows as a brighter stripe */
+        float x1 = px[j + 1] + (edges == 2 ? 0 : 0.7f * dir);
         v[4 * j + 0] = (SDL_Vertex){{px[j], top[j]}, col, {tu[j], 0}};
         v[4 * j + 1] = (SDL_Vertex){{px[j], bot[j]}, col, {tu[j], 1}};
         v[4 * j + 2] = (SDL_Vertex){{x1, top[j + 1]}, col, {tu[j + 1], 0}};
         v[4 * j + 3] = (SDL_Vertex){{x1, bot[j + 1]}, col, {tu[j + 1], 1}};
+        /* edges only: a body layer shows only at the sides, the face in front covers the rest */
+        if (edges == 1 && j >= 3 && j < N - 3) continue;
         int a = 4 * j;
-        idx[6 * j + 0] = a; idx[6 * j + 1] = a + 1; idx[6 * j + 2] = a + 2;
-        idx[6 * j + 3] = a + 2; idx[6 * j + 4] = a + 1; idx[6 * j + 5] = a + 3;
+        idx[ni++] = a; idx[ni++] = a + 1; idx[ni++] = a + 2;
+        idx[ni++] = a + 2; idx[ni++] = a + 1; idx[ni++] = a + 3;
     }
-    SDL_RenderGeometry(R, tex, v, 4 * N, idx, 6 * N);
+    SDL_RenderGeometry(R, tex, v, 4 * N, idx, ni);
 }
 
 /* the game turned by deg degrees: its body as stacked layers for the thickness,
  * the face toward you on top, and its reflection (rt = top of the reflection) */
+static int g_spin_parts = 3;   /* 1 the reflection, 2 the body, 3 both */
+
 static void draw_spun(Game *g, float cx, float cy, float w, float h, float deg, float rt, float rh, Uint8 bright,
                       Uint8 alpha) {
     float a = deg * (float)M_PI / 180.0f, ca = SDL_cosf(a), sa = SDL_sinf(a);
@@ -3843,20 +3855,21 @@ static void draw_spun(Game *g, float cx, float cy, float w, float h, float deg, 
     if (!front && !g->back) make_back(g);
     SDL_Texture *face = front ? g->media : (g->back ? g->back : g->media);
     /* reflection: the face toward you, fading as it turns edge-on */
-    if (g->refl) {
+    if (g->refl && (g_spin_parts & 1)) {
         Uint8 ra = (Uint8)(alpha * (0.25f + 0.75f * SDL_fabsf(ca)));
-        draw_spun_face(g->refl, !front, cx, rt + rh / 2, w, rh, ca, sa, 0, bright, bright, bright, ra);
+        draw_spun_face(g->refl, !front, cx, rt + rh / 2, w, rh, ca, sa, 0, bright, bright, bright, ra, 2);
     }
     /* thickness: cartridges and cards are chunky, discs thin */
+    if (!(g_spin_parts & 2)) return;
     float thick = t->kind ? SDL_max(2.0f, w * 0.012f) : w * 0.12f;
     int layers = t->kind ? 2 : (int)SDL_clamp(thick / 2.5f, 3, 12);
     float zn = front ? -thick / 2 : thick / 2, zf = -zn;
     Uint8 dark = (Uint8)(bright * 0.42f);
     for (int i = 0; i < layers; i++) {
         float zp = zf + (zn - zf) * i / layers;
-        draw_spun_face(face, !front, cx, cy, w, h, ca, sa, zp, dark, dark, (Uint8)SDL_min(255, dark + 4), alpha);
+        draw_spun_face(face, !front, cx, cy, w, h, ca, sa, zp, dark, dark, (Uint8)SDL_min(255, dark + 4), alpha, 1);
     }
-    draw_spun_face(face, !front, cx, cy, w, h, ca, sa, zn, bright, bright, bright, alpha);
+    draw_spun_face(face, !front, cx, cy, w, h, ca, sa, zn, bright, bright, bright, alpha, 0);
 }
 
 /* the right stick turns the selected game; another game starts facing front */
@@ -4316,9 +4329,11 @@ typedef struct {
     int have_info;
     char name[160], year[8], genre[160], dev[160], pub[160], players[16];
     char overview[1700];
-    SDL_Texture *shot[2];
-    SDL_Texture *comp[2];   /* each shot made into the whole backdrop once: background, shot, shade, floor */
-    Uint32 comp_accent;
+    SDL_Texture *shot[2];   /* unused: kept for the count below */
+    SDL_Texture *comp[2];   /* the shot made into the whole backdrop once: background, shot, shade, floor */
+    SDL_Surface *shot_s;    /* the screenshot's pixels, for the worker */
+    struct BdJob *job;      /* the backdrop being built in the background */
+    Uint32 comp_accent, comp_t0;
     int nshots;
     int state;          /* which of the three files exist, to notice new ones */
     Uint32 checked;
@@ -4346,11 +4361,141 @@ static int det_state(Game *g) {
     return st;
 }
 
+/* The details backdrop, built on a worker thread from plain pixels (the background, the
+ * screenshot scaled to fill and dimmed, darker on the left, the floor back on top), so opening
+ * the details screen never waits for it: it fades in when it's ready. */
+typedef struct BdJob {
+    SDL_Surface *bg, *shot, *out;
+    int state;              /* 0 building, 1 done; 2 no longer wanted, 3 that and finished */
+    int go;                 /* set once the details screen has stopped sliding in: no work during it */
+    pthread_t th;
+} BdJob;
+
+static void *bd_worker(void *arg) {
+    BdJob *j = arg;
+    while (!__atomic_load_n(&j->go, __ATOMIC_ACQUIRE) && __atomic_load_n(&j->state, __ATOMIC_ACQUIRE) == 0)
+        usleep(4000);
+    SDL_Surface *o = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_W, SCREEN_H, 32, SDL_PIXELFORMAT_ARGB8888);
+    if (o) {
+        const SDL_Surface *b = j->bg, *sh = j->shot;
+        int sw = sh->w, shh = sh->h;
+        float sc = SDL_max((float)SCREEN_W / sw, (float)SCREEN_H / shh);
+        float ox = (SCREEN_W - sw * sc) / 2, oy = (SCREEN_H - shh * sc) / 2;
+        static int ftop[SCREEN_W];
+        for (int x = 0; x < SCREEN_W; x++) {
+            float top, bot;
+            ftop[x] = floor_span(((x & ~7) + 4.0f), &top, &bot) ? (int)top - 2 : SCREEN_H;
+        }
+        for (int y = 0; y < SCREEN_H; y++) {
+            const Uint32 *br = (const Uint32 *)((const Uint8 *)b->pixels + y * b->pitch);
+            Uint32 *orow = (Uint32 *)((Uint8 *)o->pixels + y * o->pitch);
+            float sy = (y + 0.5f - oy) / sc - 0.5f;
+            int y0 = (int)SDL_floorf(sy);
+            float fy = sy - y0;
+            int ya = SDL_clamp(y0, 0, shh - 1), yb = SDL_clamp(y0 + 1, 0, shh - 1);
+            const Uint32 *s0 = (const Uint32 *)((const Uint8 *)sh->pixels + ya * sh->pitch);
+            const Uint32 *s1 = (const Uint32 *)((const Uint8 *)sh->pixels + yb * sh->pitch);
+            for (int x = 0; x < SCREEN_W; x++) {
+                Uint32 bp = br[x];
+                if (y >= ftop[x]) {          /* the floor stays as it is */
+                    orow[x] = bp;
+                    continue;
+                }
+                float sx = (x + 0.5f - ox) / sc - 0.5f;
+                int x0 = (int)SDL_floorf(sx);
+                float fx = sx - x0;
+                int xa = SDL_clamp(x0, 0, sw - 1), xb = SDL_clamp(x0 + 1, 0, sw - 1);
+                float c[3];
+                for (int k = 0; k < 3; k++) {
+                    int sh8 = 16 - 8 * k;
+                    float p00 = (s0[xa] >> sh8) & 255, p01 = (s0[xb] >> sh8) & 255;
+                    float p10 = (s1[xa] >> sh8) & 255, p11 = (s1[xb] >> sh8) & 255;
+                    c[k] = (p00 * (1 - fx) + p01 * fx) * (1 - fy) + (p10 * (1 - fx) + p11 * fx) * fy;
+                }
+                /* dimmed and a little blue, at 42% over the background */
+                static const float tint[3] = {120 / 255.0f, 120 / 255.0f, 132 / 255.0f};
+                const float al = 107 / 255.0f;
+                float d = x < 1100 ? 140 / 255.0f * (1.0f - (x & ~19) / 1100.0f) : 0;   /* darker on the left */
+                static const float dark[3] = {6, 7, 12};
+                Uint32 out = 0xff000000u;
+                for (int k = 0; k < 3; k++) {
+                    int sh8 = 16 - 8 * k;
+                    float v = ((bp >> sh8) & 255) * (1 - al) + c[k] * tint[k] * al;
+                    v = v * (1 - d) + dark[k] * d;
+                    out |= (Uint32)SDL_clamp((int)(v + 0.5f), 0, 255) << sh8;
+                }
+                orow[x] = out;
+            }
+        }
+    }
+    j->out = o;
+    /* done; or, when nobody wants it any more, finished (the main thread frees everything) */
+    if (!__atomic_compare_exchange_n(&j->state, &(int){0}, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        __atomic_store_n(&j->state, 3, __ATOMIC_RELEASE);
+    return NULL;
+}
+
+static BdJob *g_bd_dropped[8];   /* given up while still building: freed once they finish */
+
+static void bd_free(BdJob *j) {
+    if (j->out) SDL_FreeSurface(j->out);
+    SDL_FreeSurface(j->bg);
+    SDL_FreeSurface(j->shot);
+    free(j);
+}
+
+static void bd_reap(void) {
+    for (int i = 0; i < 8; i++)
+        if (g_bd_dropped[i] && __atomic_load_n(&g_bd_dropped[i]->state, __ATOMIC_ACQUIRE) == 3) {
+            bd_free(g_bd_dropped[i]);
+            g_bd_dropped[i] = NULL;
+        }
+}
+
+static void bd_drop(BdJob *j) {
+    if (!j) return;
+    if (__atomic_compare_exchange_n(&j->state, &(int){0}, 2, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        for (int i = 0; i < 8; i++)
+            if (!g_bd_dropped[i]) {
+                g_bd_dropped[i] = j;
+                return;
+            }
+        return;   /* more than 8 at once: let it go */
+    }
+    bd_free(j);   /* it had finished */
+}
+
+static void bd_start(void) {
+    bd_reap();
+    if (!g_dx.shot_s || !g_bg_surf || g_dx.job) return;
+    BdJob *j = calloc(1, sizeof(*j));
+    if (!j) return;
+    j->bg = g_bg_surf;
+    j->bg->refcount++;
+    j->shot = g_dx.shot_s;
+    j->shot->refcount++;
+    pthread_attr_t at;
+    pthread_attr_init(&at);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setstacksize(&at, 256 * 1024);
+    if (pthread_create(&j->th, &at, bd_worker, j) != 0) {
+        SDL_FreeSurface(j->bg);
+        SDL_FreeSurface(j->shot);
+        free(j);
+        j = NULL;
+    }
+    pthread_attr_destroy(&at);
+    g_dx.job = j;
+    g_dx.comp_accent = g_bg_accent;
+}
+
 static void det_free(void) {
     for (int i = 0; i < 2; i++) {
         if (g_dx.shot[i]) SDL_DestroyTexture(g_dx.shot[i]);
         if (g_dx.comp[i]) SDL_DestroyTexture(g_dx.comp[i]);
     }
+    bd_drop(g_dx.job);
+    if (g_dx.shot_s) SDL_FreeSurface(g_dx.shot_s);
     memset(&g_dx, 0, sizeof(g_dx));
 }
 
@@ -4411,11 +4556,12 @@ static void det_load(Game *g) {
             if (!file_exists(p)) continue;
             SDL_Surface *sf = load_art_surface(p, 960, 720);
             if (sf) {
-                SDL_Texture *tx = SDL_CreateTextureFromSurface(R, sf);
+                SDL_Surface *cv = SDL_ConvertSurfaceFormat(sf, SDL_PIXELFORMAT_ARGB8888, 0);
                 SDL_FreeSurface(sf);
-                if (tx) {
-                    SDL_SetTextureBlendMode(tx, SDL_BLENDMODE_BLEND);
-                    g_dx.shot[g_dx.nshots++] = tx;
+                if (cv) {
+                    g_dx.shot_s = cv;
+                    g_dx.nshots = 1;
+                    bd_start();   /* built in the background, shown when it's ready */
                 }
             }
             break;
@@ -4426,7 +4572,8 @@ static void det_load(Game *g) {
 /* the screenshot, full screen behind the floor, dimmed */
 /* draws the whole background of the details screen (the normal one, or the
  * screenshot backdrop over it) */
-static void draw_det_backdrop(Game *g, Uint8 a) {
+/* the game's extras loaded, and new downloads noticed */
+static void draw_det_poll(Game *g) {
     if (g_dx.g != g) det_load(g);
     else if (g_art_running && SDL_GetTicks() - g_dx.checked > 3000) {
         /* still downloading: show what arrives */
@@ -4434,69 +4581,65 @@ static void draw_det_backdrop(Game *g, Uint8 a) {
         if (det_state(g) != g_dx.state) det_load(g);
         else det_facts(g);
     }
+}
+
+static void draw_det_backdrop(Game *g, Uint8 a) {
+    draw_det_poll(g);
     if (!T_bg) {
         fill_rect(0, 0, SCREEN_W, SCREEN_H, 0x12141f, 255);
         return;
     }
-    int opaque = g_dx.nshots && g_dx.comp[0] && a == 255;
-    if (!opaque) SDL_RenderCopy(R, T_bg, NULL, NULL);
-    if (!g_dx.nshots) return;
-    /* the backdrops, put together once (drawing a scaled, blended screenshot and
-     * the floor every frame was far too slow) */
-    if (g_dx.comp_accent != g_bg_accent)
-        for (int i = 0; i < 2; i++)
-            if (g_dx.comp[i]) {
-                SDL_DestroyTexture(g_dx.comp[i]);
-                g_dx.comp[i] = NULL;
-            }
-    g_dx.comp_accent = g_bg_accent;
-    for (int i = 0; i < g_dx.nshots; i++) {
-        if (g_dx.comp[i] || !g_dx.shot[i]) continue;
-        SDL_Texture *c = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, SCREEN_W, SCREEN_H);
-        if (!c) return;
-        SDL_Texture *prev = SDL_GetRenderTarget(R);
-        SDL_SetRenderTarget(R, c);
-        SDL_RenderCopy(R, T_bg, NULL, NULL);
-        int w, h;
-        SDL_QueryTexture(g_dx.shot[i], NULL, NULL, &w, &h);
-        float sc = SDL_max((float)SCREEN_W / w, (float)SCREEN_H / h);
-        SDL_Rect d = {(int)(SCREEN_W - w * sc) / 2, (int)(SCREEN_H - h * sc) / 2, (int)(w * sc), (int)(h * sc)};
-        SDL_SetTextureColorMod(g_dx.shot[i], 120, 120, 132);
-        SDL_SetTextureAlphaMod(g_dx.shot[i], 107);
-        SDL_RenderCopy(R, g_dx.shot[i], NULL, &d);
-        /* darker on the left, where the text is */
-        for (int x = 0; x < 1100; x += 20)
-            fill_rect(x, 0, 20, SCREEN_H, 0x06070c, (Uint8)(140 * (1.0f - x / 1100.0f)));
-        /* the floor back on top, column by column along its curved far edge */
-        for (int x = 0; x < SCREEN_W; x += 8) {
-            float top, bot;
-            if (!floor_span(x + 4.0f, &top, &bot)) continue;
-            int y0 = (int)top - 2;
-            SDL_Rect r = {x, y0, 8, SCREEN_H - y0};
-            SDL_RenderCopy(R, T_bg, &r, &r);
+    /* the colour changed (another system): build it again for the new background */
+    if (g_dx.nshots && g_dx.comp_accent != g_bg_accent && !g_dx.job) {
+        if (g_dx.comp[0]) {
+            SDL_DestroyTexture(g_dx.comp[0]);
+            g_dx.comp[0] = NULL;
         }
-        SDL_SetRenderTarget(R, prev);
-        SDL_SetTextureBlendMode(c, SDL_BLENDMODE_BLEND);
-        g_dx.comp[i] = c;
+        bd_start();
     }
-    const Uint32 HOLD = 6000, FADE = 1200;
-    Uint32 now = SDL_GetTicks();
-    int cur = (int)((now / HOLD) % (Uint32)g_dx.nshots), nxt = (cur + 1) % g_dx.nshots;
-    Uint32 in = now % HOLD;
-    float f = g_dx.nshots > 1 && in > HOLD - FADE ? (float)(in - (HOLD - FADE)) / FADE : 0;
-    if (g_dx.comp[cur]) {
-        SDL_SetTextureAlphaMod(g_dx.comp[cur], a);
-        SDL_SetTextureBlendMode(g_dx.comp[cur], a == 255 ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
-        SDL_RenderCopy(R, g_dx.comp[cur], NULL, NULL);
+    bd_reap();
+    /* the worker finished: its pixels into a texture (one upload), then fade it in */
+    /* (not while the details screen slides in: it waits until everything has stopped moving) */
+    if (g_dx.job && g_det_t >= 1) __atomic_store_n(&g_dx.job->go, 1, __ATOMIC_RELEASE);
+    if (g_dx.job && g_det_t >= 1 && __atomic_load_n(&g_dx.job->state, __ATOMIC_ACQUIRE) == 1) {
+        BdJob *jb = g_dx.job;
+        g_dx.job = NULL;
+        if (jb->out) {
+            SDL_Texture *c = SDL_CreateTextureFromSurface(R, jb->out);
+            if (c) {
+                if (g_dx.comp[0]) SDL_DestroyTexture(g_dx.comp[0]);
+                g_dx.comp[0] = c;
+                g_dx.comp_t0 = SDL_GetTicks();
+            }
+        }
+        bd_drop(jb);
     }
-    if (f > 0 && g_dx.comp[nxt]) {
-        SDL_SetTextureBlendMode(g_dx.comp[nxt], SDL_BLENDMODE_BLEND);
-        SDL_SetTextureAlphaMod(g_dx.comp[nxt], (Uint8)(a * f));
-        SDL_RenderCopy(R, g_dx.comp[nxt], NULL, NULL);
-    }
+    float in = g_dx.comp[0] ? SDL_min(1.0f, (SDL_GetTicks() - g_dx.comp_t0) / 300.0f) : 0;
+    Uint8 ca = (Uint8)(a * in);
+    if (!g_dx.comp[0] || ca < 255) SDL_RenderCopy(R, T_bg, NULL, NULL);
+    if (!g_dx.comp[0] || ca == 0) return;
+    SDL_SetTextureBlendMode(g_dx.comp[0], ca == 255 ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
+    SDL_SetTextureAlphaMod(g_dx.comp[0], ca);
+    SDL_RenderCopy(R, g_dx.comp[0], NULL, NULL);
 }
 
-static void draw_details_media(Game *g, Uint32 accent, float t) {
+/* The settled details screen is drawn from caches (the software renderer on the console is far
+ * too slow to scale and blend the backdrop, the glow and a turned cartridge every frame):
+ *   base   the backdrop, the shadow and the glow, made once
+ *   still  the base and the cartridge, while it isn't being turned
+ * While it turns: the base, the reflection, and the body drawn at half size and scaled up. */
+static int g_det_mode;           /* 0 drawn live, 1 from the still frame, 2 from the base */
+static SDL_Rect g_det_media_rc;  /* where the cartridge and its reflection are (rain goes around it) */
+static SDL_Texture *g_det_base, *g_det_still, *g_det_half;
+static struct { Game *g; SDL_Texture *media, *refl, *comp; Uint32 accent; float still_spin; } g_dk;
+static float g_det_spin_seen = -9999;   /* the angle last frame, and when it last changed */
+static Uint32 g_det_spin_at;
+
+static void draw_details_media_parts(Game *g, Uint32 accent, float t, int parts);
+
+static void draw_details_media(Game *g, Uint32 accent, float t) { draw_details_media_parts(g, accent, t, 3); }
+
+static void draw_details_media_parts(Game *g, Uint32 accent, float t, int parts) {
     if (!g->media) build_media(g);
     if (!g->media) return;
     const MediaTpl *mt = &MEDIA_TPL[tpl_of(&g_sys[g->sys])];
@@ -4510,16 +4653,17 @@ static void draw_details_media(Game *g, Uint32 accent, float t) {
     float cy = floor_y - h / 2 - 10;
     float x0 = cx - w / 2;
 
-    if (T_shadow) {
+    if (T_shadow && (parts & 1)) {
         SDL_SetTextureAlphaMod(T_shadow, 190);
         SDL_Rect sd = {(int)(cx - w * 0.6f), (int)(floor_y - 22), (int)(w * 1.2f), 48};
         SDL_RenderCopy(R, T_shadow, NULL, &sd);
     }
-    if (T_glow) {
+    if (T_glow && (parts & 1)) {
         set_color(T_glow, accent, 170);
         SDL_Rect gd = {(int)(cx - w * 1.0f), (int)(cy - h * 0.9f), (int)(w * 2.0f), (int)(h * 1.8f)};
         SDL_RenderCopy(R, T_glow, NULL, &gd);
     }
+    if (!(parts & 2)) return;
     /* turned toward the left: the left edge is the near one */
     int strips = 12;
     float yt[17], yb[17], rt[17], rb[17];
@@ -4532,13 +4676,108 @@ static void draw_details_media(Game *g, Uint32 accent, float t) {
         rt[j] = yb[j] + 13;
         rb[j] = rt[j] + rh * hf;
     }
+    g_det_media_rc = (SDL_Rect){(int)(x0 - 4), (int)(cy - h / 2 - 4), (int)(w + 8), (int)(rb[0] - (cy - h / 2) + 8)};
     if (draw_launch_anim(g, cx, cy, w, h, 255, 255)) return;
     if (g == g_spin_game && g_spin != 0) {
+        if (g_det_mode != 2) {
+            draw_spun(g, cx, cy, w, h, g_spin, cy + h / 2 + 13, rh, 255, 255);
+            return;
+        }
+        /* the reflection as it is, the body at half size into its own texture, scaled up */
+        g_spin_parts = 1;
         draw_spun(g, cx, cy, w, h, g_spin, cy + h / 2 + 13, rh, 255, 255);
+        g_spin_parts = 3;
+        int bw = (int)(w * 1.5f) + 8, bh = (int)(h * 1.3f) + 8;
+        int hw = bw / 2, hh = bh / 2;
+        int tw = 0, th = 0;
+        if (g_det_half) SDL_QueryTexture(g_det_half, NULL, NULL, &tw, &th);
+        if (!g_det_half || tw < hw || th < hh) {
+            if (g_det_half) SDL_DestroyTexture(g_det_half);
+            g_det_half = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, hw, hh);
+            if (!g_det_half) return;
+            SDL_SetTextureBlendMode(g_det_half, SDL_BLENDMODE_BLEND);
+            tw = hw;
+            th = hh;
+        }
+        SDL_Texture *prev = SDL_GetRenderTarget(R);
+        SDL_SetRenderTarget(R, g_det_half);
+        SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(R, 0, 0, 0, 0);
+        SDL_RenderClear(R);
+        g_spin_scale = 0.5f;
+        g_spin_parts = 2;
+        draw_spun(g, hw / 2.0f, hh / 2.0f, w * 0.5f, h * 0.5f, g_spin, 0, rh * 0.5f, 255, 255);
+        g_spin_parts = 3;
+        g_spin_scale = 1;
+        SDL_SetRenderTarget(R, prev);
+        SDL_Rect src = {0, 0, hw, hh};
+        SDL_Rect dst = {(int)(cx - hw), (int)(cy - hh), hw * 2, hh * 2};
+        SDL_RenderCopy(R, g_det_half, &src, &dst);
         return;
     }
     if (g->refl) draw_turned(g->refl, x0, w, rt, rb, strips, 255, 255);
     draw_turned(g->media, x0, w, yt, yb, strips, 255, 255);
+}
+
+/* the backdrop has settled: built (or there is none), and done fading in */
+static int det_settled(void) {
+    if (g_dx.job) return 0;
+    if (g_dx.nshots && !g_dx.comp[0]) return 0;
+    if (g_dx.comp[0] && SDL_GetTicks() - g_dx.comp_t0 < 320) return 0;
+    return 1;
+}
+
+static void det_cache_drop(void) {
+    if (g_det_base) SDL_DestroyTexture(g_det_base);
+    if (g_det_still) SDL_DestroyTexture(g_det_still);
+    g_det_base = g_det_still = NULL;
+    memset(&g_dk, 0, sizeof(g_dk));
+}
+
+/* draws the settled details screen's backdrop and cartridge from the caches, making them when
+ * needed; sets g_det_mode. Returns 0 when it can't (then everything is drawn live). */
+static void draw_det_backdrop(Game *g, Uint8 a);
+static int det_cached(Game *g, Uint32 accent) {
+    g_det_mode = 0;
+    if (g_det_t < 1 || g_launch_game || !det_settled()) return 0;
+    if (g_dk.g != g || g_dk.media != g->media || g_dk.refl != g->refl || g_dk.comp != g_dx.comp[0] ||
+        g_dk.accent != g_bg_accent) {
+        det_cache_drop();
+        g_dk.g = g;
+        g_dk.media = g->media;
+        g_dk.refl = g->refl;
+        g_dk.comp = g_dx.comp[0];
+        g_dk.accent = g_bg_accent;
+    }
+    float ang = g == g_spin_game ? g_spin : 0;
+    if (ang != g_det_spin_seen) {
+        g_det_spin_seen = ang;
+        g_det_spin_at = SDL_GetTicks();
+    }
+    /* turning now: the base, with the cartridge drawn each frame. At rest (also turned, once the
+     * stick has been let go a moment): one still frame, sharp, for as long as it stays put */
+    int spinning = ang != 0 && SDL_GetTicks() - g_det_spin_at < 150;
+    if (!spinning && g_det_still && g_dk.still_spin != ang) {
+        SDL_DestroyTexture(g_det_still);
+        g_det_still = NULL;
+    }
+    SDL_Texture **want = spinning ? &g_det_base : &g_det_still;
+    if (!*want) {
+        SDL_Texture *c = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, SCREEN_W, SCREEN_H);
+        if (!c) return 0;
+        SDL_Texture *prev = SDL_GetRenderTarget(R);
+        SDL_SetRenderTarget(R, c);
+        draw_det_backdrop(g, 255);
+        g_det_mode = 0;   /* the cartridge at full size, turned or not */
+        draw_details_media_parts(g, accent, 1.0f, spinning ? 1 : 3);
+        if (!spinning) g_dk.still_spin = ang;
+        SDL_SetRenderTarget(R, prev);
+        SDL_SetTextureBlendMode(c, SDL_BLENDMODE_NONE);
+        *want = c;
+    }
+    SDL_RenderCopy(R, *want, NULL, NULL);
+    g_det_mode = spinning ? 2 : 1;
+    return 1;
 }
 
 static void draw_details(Uint32 accent) {
@@ -4550,7 +4789,8 @@ static void draw_details(Uint32 accent) {
     if (g_det_game != g_sel_game) g_det_game = g_sel_game;
     float t = ease(g_det_t);
     Uint8 a = (Uint8)(255 * SDL_min(1.0f, g_det_t * 1.6f));
-    draw_details_media(g, accent, t);
+    if (g_det_mode == 0) draw_details_media(g, accent, t);
+    else if (g_det_mode == 2) draw_details_media_parts(g, accent, 1.0f, 2);
 
     if (a < 8) return;
     System *s = &g_sys[g->sys];
@@ -5008,11 +5248,29 @@ static void start_music(void) {
 static void render(void) {
     Uint32 accent = entry_accent(g_sel_entry);
     make_background_for(g_nentries ? (g_entries[g_sel_entry].kind == 1 ? g_sys[g_entries[g_sel_entry].sys].color : accent) : 0x2f8fd8);
-    if (g_details && entry_count() > 0 && entry_game(g_sel_game))
-        draw_det_backdrop(entry_game(g_sel_game), (Uint8)(255 * SDL_min(1.0f, g_det_t * 1.6f)));
-    else if (T_bg) SDL_RenderCopy(R, T_bg, NULL, NULL);
+    g_det_mode = 0;
+    if (g_details && entry_count() > 0 && entry_game(g_sel_game)) {
+        Game *dg = entry_game(g_sel_game);
+        draw_det_poll(dg);
+        if (!det_cached(dg, accent)) draw_det_backdrop(dg, (Uint8)(255 * SDL_min(1.0f, g_det_t * 1.6f)));
+    } else if (T_bg) SDL_RenderCopy(R, T_bg, NULL, NULL);
     else fill_rect(0, 0, SCREEN_W, SCREEN_H, 0x12141f, 255);
-    if (g_rain_on) draw_rain();
+    if (g_rain_on) {
+        if (g_det_mode == 1) {
+            /* the cartridge is already in the picture: rain around it, not over it */
+            SDL_Rect m = g_det_media_rc;
+            SDL_Rect bands[4] = {{0, 0, SCREEN_W, m.y}, {0, m.y + m.h, SCREEN_W, SCREEN_H - m.y - m.h},
+                                 {0, m.y, m.x, m.h}, {m.x + m.w, m.y, SCREEN_W - m.x - m.w, m.h}};
+            for (int i = 0; i < 4; i++) {
+                if (bands[i].w <= 0 || bands[i].h <= 0) continue;
+                SDL_RenderSetClipRect(R, &bands[i]);
+                draw_rain();
+            }
+            SDL_RenderSetClipRect(R, NULL);
+        } else {
+            draw_rain();
+        }
+    }
     draw_header();
     if (g_nentries == 0) {
         draw_no_games();
@@ -6228,6 +6486,34 @@ int main(int argc, char **argv) {
                 }
                 double ms = (SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency() / SDL_max(1, nfr);
                 fprintf(stderr, "bench %s: %.2f ms per frame\n", g_details ? "details" : "carousel", ms);
+                continue;
+            }
+            else if (!strncmp(tok, "framebench:", 11)) {   /* open details, then spin: each frame's time */
+                int nfr = atoi(tok + 11);
+                double worst = 0, sum = 0;
+                int worst_at = -1;
+                g_details = 1;
+                g_det_t = 0;
+                {
+                    Uint64 q0 = SDL_GetPerformanceCounter();
+                    det_load(entry_game(g_sel_game));
+                    Uint64 q1 = SDL_GetPerformanceCounter();
+                    fprintf(stderr, "det_load: %.1f ms\n", (q1 - q0) * 1000.0 / SDL_GetPerformanceFrequency());
+                }
+                for (int k = 0; k < nfr; k++) {
+                    Uint64 t0 = SDL_GetPerformanceCounter();
+                    if (k < 24) g_det_t = SDL_min(1.0f, (k + 1) / 24.0f);                   /* the slide */
+                    else if (k < 60) SDL_Delay(16);                                          /* at rest */
+                    else { g_spin_game = entry_game(g_sel_game); g_spin = (k - 59) * 6.0f; }  /* turning */
+                    render();
+                    SDL_RenderFlush(R);
+                    double ms = (SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency();
+                    if (k >= 24 && k < 60) ms -= 16;
+                    sum += ms;
+                    if (ms > worst) { worst = ms; worst_at = k; }
+                    if (getenv("JC_FRAMES")) fprintf(stderr, "frame %d: %.1f ms\n", k, ms);
+                }
+                fprintf(stderr, "average %.1f ms, worst %.1f ms at frame %d\n", sum / nfr, worst, worst_at);
                 continue;
             }
             else if (!strncmp(tok, "takeoff:", 8)) {   /* the launch animation at a point, for screenshots */
