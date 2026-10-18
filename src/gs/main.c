@@ -3114,7 +3114,50 @@ static void make_back(Game *g) {
     SDL_RenderClear(R);
     SDL_SetTextureColorMod(T_tpl_base[ti], 255, 255, 255);
     SDL_SetTextureAlphaMod(T_tpl_base[ti], 255);
-    SDL_RenderCopyEx(R, T_tpl_base[ti], NULL, NULL, 0, NULL, SDL_FLIP_HORIZONTAL);
+    SDL_Texture *body = NULL;
+    if (t->kind == 0) {
+        /* a cartridge's back is plain: paint the label area over with the shell
+         * around it, row by row (keeps the shading), seen from behind */
+        int w, h, n;
+        unsigned char *px = stbi_load_from_memory(t->base, (int)t->base_len, &w, &h, &n, 4);
+        if (px) {
+            int x0 = SDL_max(1, t->lx - 3), x1 = SDL_min(w - 2, t->lx + t->lw + 3);
+            int y0 = SDL_max(0, t->ly - 3), y1 = SDL_min(h, t->ly + t->lh + 3);
+            for (int y = y0; y < y1; y++) {
+                unsigned char *row = px + (size_t)y * w * 4;
+                unsigned char *a = row + (x0 - 1) * 4, *b = row + (x1 + 1) * 4;
+                if (a[3] < 200) a = b;
+                if (b[3] < 200) b = a;
+                for (int x = x0; x <= x1; x++) {
+                    float f = (float)(x - x0) / SDL_max(1, x1 - x0);
+                    unsigned char *d = row + x * 4;
+                    if (d[3] == 0) continue;
+                    for (int c = 0; c < 3; c++) d[c] = (unsigned char)(a[c] * (1 - f) + b[c] * f);
+                }
+            }
+            SDL_Surface *sf = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
+            if (sf) {
+                for (int y = 0; y < h; y++) {
+                    Uint32 *drow = (Uint32 *)((Uint8 *)sf->pixels + y * sf->pitch);
+                    const unsigned char *srow = px + (size_t)y * w * 4;
+                    for (int x = 0; x < w; x++) {
+                        const unsigned char *p = srow + (w - 1 - x) * 4;   /* mirrored */
+                        drow[x] = ((Uint32)p[3] << 24) | ((Uint32)p[0] << 16) | ((Uint32)p[1] << 8) | p[2];
+                    }
+                }
+                body = SDL_CreateTextureFromSurface(R, sf);
+                SDL_FreeSurface(sf);
+            }
+            stbi_image_free(px);
+        }
+    }
+    if (body) {
+        SDL_SetTextureBlendMode(body, SDL_BLENDMODE_BLEND);
+        SDL_RenderCopy(R, body, NULL, NULL);
+        SDL_DestroyTexture(body);
+    } else {
+        SDL_RenderCopyEx(R, T_tpl_base[ti], NULL, NULL, 0, NULL, SDL_FLIP_HORIZONTAL);
+    }
     if (t->kind == 1) {
         /* the data side: silver, tinted by the disc's colour, with a rainbow sheen */
         float tr = 200, tg = 204, tb = 212, k = 0;
@@ -3329,7 +3372,9 @@ static void draw_carousel(Uint32 accent) {
         const MediaTpl *mt = &MEDIA_TPL[tpl_of(&g_sys[g->sys])];
         float kind_sc = mt->kind ? 0.86f : (mt->h > 360 ? 0.9f : 1.0f);
         float sc = slot_lerp(SLOT_SCALE, d) * CAROUSEL_SCALE * kind_sc;
-        float x = 960 + (t < 0 ? -1 : 1) * slot_lerp(SLOT_X, d);
+        /* wide cartridges (N64, SNES) get a little more room between them */
+        float spread = SDL_clamp(1.0f + (mt->w * kind_sc - 400.0f) / 400.0f * 1.4f, 1.0f, 1.2f);
+        float x = 960 + (t < 0 ? -1 : 1) * slot_lerp(SLOT_X, d) * spread;
         float turn = slot_lerp(SLOT_TURN, d > 1 ? 1 : d);
         Uint8 bright = (Uint8)slot_lerp(SLOT_BRIGHT, d), alpha = (Uint8)slot_lerp(SLOT_ALPHA, d);
         float w = g->media_w * sc * (1.0f - 0.10f * turn), h = g->media_h * sc;
