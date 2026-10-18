@@ -104,6 +104,7 @@ run.
 | Cross | play | Square | technical info |
 | Triangle | favorite | Circle | back |
 | Square | details screen | | |
+| Right stick | turn the game around | Right stick | turn the game around |
 | Options | settings | | |
 | Circle | close Jewel Case | | |
 

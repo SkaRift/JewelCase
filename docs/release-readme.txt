@@ -42,7 +42,10 @@ Put each system's games in its own folder under /data/roms
     /data/roms/psx/Final Fantasy VII (USA).m3u
     /data/roms/ps2/Kingdom Hearts (USA).iso
 
-Settings > "Create system folders" makes every folder for you and
+Settings > "Games folder" picks the drive for your roms folder (internal
+storage, extended storage or a USB drive; games in a roms folder on any
+drive are found either way), and "Create system folders" makes every
+folder there for you and
 writes "_Jewel Case folder guide.txt" in /data/roms, listing each folder
 and the file types it takes.
 
@@ -98,6 +101,7 @@ Carousel:
   L1 / R1         change system           Cross      play
   Triangle        favorite                Square     details screen
   Circle          close Jewel Case        Options    settings
+  Right stick     turn the game around (it faces front again on the next game)
 
 Details screen:
   Left / Right    next / previous game    Cross      play
@@ -110,7 +114,7 @@ them.
 
 SETTINGS
 --------
-Rescan games, Create system folders, Download missing covers,
+Rescan games, Games folder, Create system folders, Download missing covers,
 Redownload all covers, Download covers automatically, Background music,
 Music volume, Rain effect, Show empty systems, Clear recently played,
 Emulators (what was found), About.

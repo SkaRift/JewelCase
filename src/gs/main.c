@@ -439,6 +439,7 @@ typedef struct Game {
     char stem[256];             /* file (or folder) name without extension */
     /* carousel image: the game's cartridge / disc with its art, and its floor reflection */
     SDL_Texture *media, *refl;
+    SDL_Texture *back;          /* its back, made when it's first turned around */
     int media_w, media_h, refl_h;
     int media_pending;          /* built without art while its cover is downloading */
     int extra_pending;          /* disc: its logo / disc scan not looked for yet */
@@ -469,6 +470,7 @@ static int g_nsys;
 static char g_roots[48][256];
 static int g_nroots;
 static int g_hide_empty = 1;
+static char g_rom_folder[64] = "/data/roms";   /* where Create system folders makes them */
 
 /* recent list (newest first) and favourites */
 #define MAX_RECENT 30
@@ -2237,7 +2239,7 @@ static void draw_icon(int icon, int x, int y, int size, Uint32 rgb, Uint8 a) {
 /* the stage floor: a wide flat ellipse the games stand on (its far edge just
  * above their feet); rain lands on it, reflections lie on it */
 #define FLOOR_CX 960.0f
-#define FLOOR_RX 1500.0f
+#define FLOOR_RX 2600.0f        /* wide, so its far edge curves gently */
 #define FLOOR_TOP 626.0f        /* FLOOR_Y - 26 */
 #define FLOOR_RY 420.0f         /* the near edge is well below the screen */
 #define FLOOR_CY (FLOOR_TOP + FLOOR_RY)
@@ -2670,7 +2672,8 @@ static Uint32 entry_accent(int i) {
 static void free_media(Game *g) {
     if (g->media) SDL_DestroyTexture(g->media);
     if (g->refl) SDL_DestroyTexture(g->refl);
-    g->media = g->refl = NULL;
+    if (g->back) SDL_DestroyTexture(g->back);
+    g->media = g->refl = g->back = NULL;
     g->media_pending = g->extra_pending = 0;
 }
 
@@ -3087,6 +3090,165 @@ static void draw_turned(SDL_Texture *tex, float x0, float w, const float *ytop, 
     SDL_RenderGeometry(R, tex, v, 2 * (strips + 1), idx, 6 * strips);
 }
 
+/* ------------------------------------------------------------------------ */
+/* Turning the selected game around (right stick)                            */
+/* ------------------------------------------------------------------------ */
+
+static float g_spin;            /* degrees, the selected game turned around its upright axis */
+static Game *g_spin_game;       /* the game it applies to: another game starts facing front */
+
+/* the back of a game's cartridge or disc: the template seen from behind; a disc
+ * shows its shiny data side in its own colour */
+static void make_back(Game *g) {
+    int ti = tpl_of(&g_sys[g->sys]);
+    const MediaTpl *t = &MEDIA_TPL[ti];
+    ensure_tpl(ti);
+    if (!T_tpl_base[ti]) return;
+    SDL_Texture *tgt = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, t->w, t->h);
+    if (!tgt) return;
+    SDL_Texture *prev = SDL_GetRenderTarget(R);
+    SDL_SetTextureBlendMode(tgt, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderTarget(R, tgt);
+    SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(R, 0, 0, 0, 0);
+    SDL_RenderClear(R);
+    SDL_SetTextureColorMod(T_tpl_base[ti], 255, 255, 255);
+    SDL_SetTextureAlphaMod(T_tpl_base[ti], 255);
+    SDL_RenderCopyEx(R, T_tpl_base[ti], NULL, NULL, 0, NULL, SDL_FLIP_HORIZONTAL);
+    if (t->kind == 1) {
+        /* the data side: silver, tinted by the disc's colour, with a rainbow sheen */
+        float tr = 200, tg = 204, tb = 212, k = 0;
+        if (strstr(t->name, "black")) { tr = 26; tg = 26; tb = 32; k = 0.75f; }
+        else if (strstr(t->name, "blue")) { tr = 40; tg = 80; tb = 190; k = 0.55f; }
+        else if (strstr(t->name, "green")) { tr = 40; tg = 130; tb = 60; k = 0.45f; }
+        int r_in = t->lx, r_out = t->ly, d = r_out * 2;
+        SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, d, d, 32, SDL_PIXELFORMAT_ARGB8888);
+        if (s) {
+            for (int y = 0; y < d; y++) {
+                Uint32 *row = (Uint32 *)((Uint8 *)s->pixels + y * s->pitch);
+                for (int x = 0; x < d; x++) {
+                    float dx = x + 0.5f - r_out, dy = y + 0.5f - r_out;
+                    float r = SDL_sqrtf(dx * dx + dy * dy);
+                    float a = SDL_clamp(r_out - r, 0.0f, 1.0f) * SDL_clamp(r - r_in, 0.0f, 1.0f);
+                    if (a <= 0) {
+                        row[x] = 0;
+                        continue;
+                    }
+                    float th = SDL_atan2f(dy, dx);
+                    float v = 0.58f + 0.28f * SDL_cosf(2 * th - 0.8f) + 0.06f * SDL_cosf(6 * th);
+                    float c[3] = {v * 235, v * 237, v * 242};
+                    const float tint[3] = {tr, tg, tb};
+                    for (int i = 0; i < 3; i++) {
+                        float rb = 0.07f * SDL_sinf(3 * th + r * 0.05f + i * 2.1f);
+                        c[i] = c[i] * (1 - k) + tint[i] * k * (0.6f + 0.8f * v);
+                        c[i] = c[i] * (1 + rb);
+                    }
+                    /* where the data ends, a faint ring */
+                    if (SDL_fabsf(r - r_out * 0.93f) < 1.2f) for (int i = 0; i < 3; i++) c[i] *= 0.85f;
+                    row[x] = ((Uint32)(a * 255) << 24) | ((Uint32)SDL_clamp(c[0], 0, 255) << 16) |
+                             ((Uint32)SDL_clamp(c[1], 0, 255) << 8) | (Uint32)SDL_clamp(c[2], 0, 255);
+                }
+            }
+            SDL_Texture *dt = SDL_CreateTextureFromSurface(R, s);
+            SDL_FreeSurface(s);
+            if (dt) {
+                SDL_SetTextureBlendMode(dt, SDL_BLENDMODE_BLEND);
+                SDL_Rect dr = {t->w / 2 - r_out, t->h / 2 - r_out, d, d};
+                SDL_RenderCopy(R, dt, NULL, &dr);
+                SDL_DestroyTexture(dt);
+            }
+        }
+    }
+    SDL_SetRenderTarget(R, prev);
+    g->back = tgt;
+}
+
+/* one face (or a layer of the body) of a turned game: the texture on the plane
+ * at depth zp, turned by angle a around the upright axis through cx */
+static void draw_spun_face(SDL_Texture *tex, int flip, float cx, float cy, float w, float h, float ca, float sa,
+                           float zp, Uint8 r, Uint8 g, Uint8 b, Uint8 alpha) {
+    enum { N = 16 };
+    const float F = 2400;    /* how far the eye is: perspective */
+    float px[N + 1], top[N + 1], bot[N + 1], tu[N + 1];
+    for (int j = 0; j <= N; j++) {
+        float u = (float)j / N;
+        float X = (u - 0.5f) * w;
+        float x3 = X * ca + zp * sa, z3 = -X * sa + zp * ca;
+        float k = F / (F + z3);
+        px[j] = cx + x3 * k;
+        top[j] = cy - h / 2 * k;
+        bot[j] = cy + h / 2 * k;
+        tu[j] = flip ? 1 - u : u;
+    }
+    /* each strip its own quad, a hair wider than its share so no seams show */
+    SDL_Vertex v[4 * N];
+    int idx[6 * N];
+    SDL_Color col = {r, g, b, alpha};
+    for (int j = 0; j < N; j++) {
+        float dir = px[j + 1] >= px[j] ? 1.0f : -1.0f;
+        float x1 = px[j + 1] + 0.7f * dir;
+        v[4 * j + 0] = (SDL_Vertex){{px[j], top[j]}, col, {tu[j], 0}};
+        v[4 * j + 1] = (SDL_Vertex){{px[j], bot[j]}, col, {tu[j], 1}};
+        v[4 * j + 2] = (SDL_Vertex){{x1, top[j + 1]}, col, {tu[j + 1], 0}};
+        v[4 * j + 3] = (SDL_Vertex){{x1, bot[j + 1]}, col, {tu[j + 1], 1}};
+        int a = 4 * j;
+        idx[6 * j + 0] = a; idx[6 * j + 1] = a + 1; idx[6 * j + 2] = a + 2;
+        idx[6 * j + 3] = a + 2; idx[6 * j + 4] = a + 1; idx[6 * j + 5] = a + 3;
+    }
+    SDL_RenderGeometry(R, tex, v, 4 * N, idx, 6 * N);
+}
+
+/* the game turned by deg degrees: its body as stacked layers for the thickness,
+ * the face toward you on top, and its reflection (rt = top of the reflection) */
+static void draw_spun(Game *g, float cx, float cy, float w, float h, float deg, float rt, float rh, Uint8 bright,
+                      Uint8 alpha) {
+    float a = deg * (float)M_PI / 180.0f, ca = SDL_cosf(a), sa = SDL_sinf(a);
+    const MediaTpl *t = &MEDIA_TPL[tpl_of(&g_sys[g->sys])];
+    int front = ca >= 0;
+    if (!front && !g->back) make_back(g);
+    SDL_Texture *face = front ? g->media : (g->back ? g->back : g->media);
+    /* reflection: the face toward you, fading as it turns edge-on */
+    if (g->refl) {
+        Uint8 ra = (Uint8)(alpha * (0.25f + 0.75f * SDL_fabsf(ca)));
+        draw_spun_face(g->refl, !front, cx, rt + rh / 2, w, rh, ca, sa, 0, bright, bright, bright, ra);
+    }
+    /* thickness: cartridges and cards are chunky, discs thin */
+    float thick = t->kind ? SDL_max(2.0f, w * 0.012f) : w * 0.12f;
+    int layers = t->kind ? 2 : (int)SDL_clamp(thick / 2.5f, 3, 12);
+    float zn = front ? -thick / 2 : thick / 2, zf = -zn;
+    Uint8 dark = (Uint8)(bright * 0.42f);
+    for (int i = 0; i < layers; i++) {
+        float zp = zf + (zn - zf) * i / layers;
+        draw_spun_face(face, !front, cx, cy, w, h, ca, sa, zp, dark, dark, (Uint8)SDL_min(255, dark + 4), alpha);
+    }
+    draw_spun_face(face, !front, cx, cy, w, h, ca, sa, zn, bright, bright, bright, alpha);
+}
+
+/* the right stick turns the selected game; another game starts facing front */
+static int update_spin(float dt) {
+    Game *cur = entry_game(g_sel_game);
+    int changed = 0;
+    if (cur != g_spin_game) {
+        g_spin_game = cur;
+        if (g_spin != 0) changed = 1;
+        g_spin = 0;
+    }
+    int rx = 0;
+    for (int i = 0; i < SDL_NumJoysticks(); i++) {
+        SDL_GameController *gc = SDL_GameControllerFromInstanceID(SDL_JoystickGetDeviceInstanceID(i));
+        if (!gc) continue;
+        int v = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTX);
+        if (abs(v) > abs(rx)) rx = v;
+    }
+    if (abs(rx) > 7000) {
+        float f = (abs(rx) - 7000) / (32767.0f - 7000);
+        g_spin += (rx > 0 ? 1 : -1) * f * f * 300.0f * dt;   /* up to 300 degrees a second */
+        g_spin = SDL_fmodf(g_spin, 360.0f);
+        changed = 1;
+    }
+    return changed;
+}
+
 /* carousel slot look by distance from the centre (interpolated) */
 static const float SLOT_SCALE[] = {1.0f, 0.80f, 0.66f, 0.56f, 0.48f, 0.42f, 0.38f};
 static const float SLOT_X[] = {0, 400, 660, 870, 1040, 1175, 1280};
@@ -3199,6 +3361,10 @@ static void draw_carousel(Uint32 accent) {
             yb[j] = cy + h * hf / 2;
             rt[j] = yb[j] + 3 + lift;
             rb[j] = rt[j] + rh * hf;
+        }
+        if (g == g_spin_game && g_spin != 0 && d < 0.5f) {
+            draw_spun(g, x, cy, w, h, g_spin, cy + h / 2 + 3 + lift, rh, bright, alpha);
+            continue;
         }
         if (g->refl) draw_turned(g->refl, x0, w, rt, rb, strips, bright, alpha);
         draw_turned(g->media, x0, w, yt, yb, strips, bright, alpha);
@@ -3482,6 +3648,10 @@ static void draw_details_media(Game *g, Uint32 accent, float t) {
         rt[j] = yb[j] + 13;
         rb[j] = rt[j] + rh * hf;
     }
+    if (g == g_spin_game && g_spin != 0) {
+        draw_spun(g, cx, cy, w, h, g_spin, cy + h / 2 + 13, rh, 255, 255);
+        return;
+    }
     if (g->refl) draw_turned(g->refl, x0, w, rt, rb, strips, 255, 255);
     draw_turned(g->media, x0, w, yt, yb, strips, 255, 255);
 }
@@ -3741,7 +3911,11 @@ static void draw_empty_case(const char *line1, const char *line2) {
 }
 
 static void draw_no_games(void) {
-    draw_empty_case("No games found", "add games to /data/roms/<system>");
+    {
+        char where[120];
+        snprintf(where, sizeof(where), "add games to %s/<system>", g_rom_folder);
+        draw_empty_case("No games found", where);
+    }
     int y = 720;
     const char *t = "Put your games in a folder per system, for example:";
     float w = text_width(&F_body, t);
@@ -3907,7 +4081,7 @@ static void render(void) {
         if (entry_count() == 0) {
             char where[200];
             Entry *e = &g_entries[g_sel_entry];
-            if (e->kind == 1) snprintf(where, sizeof(where), "add games to /data/roms/%s", g_sys[e->sys].folders[0]);
+            if (e->kind == 1) snprintf(where, sizeof(where), "add games to %s/%s", g_rom_folder, g_sys[e->sys].folders[0]);
             else where[0] = 0;
             draw_empty_case("No games found", where);
         } else {
@@ -3987,16 +4161,43 @@ static SDL_Window *g_win;
 
 static int g_auto_covers = 1;
 
-enum { SET_RESCAN, SET_FOLDERS, SET_MISSING, SET_REDOWNLOAD, SET_AUTO, SET_MUSIC, SET_VOLUME, SET_RAIN, SET_EMPTY, SET_CLEAR_RECENT, SET_EMULATORS, SET_ABOUT, SET_COUNT };
+/* where "Create system folders" makes the system folders. Games are found in a
+ * roms folder on every drive either way. */
+
+/* folders for jc-scan.elf to create before it lists ("M<TAB>path" lines) */
+static char g_scan_mkdirs[16384];
+
+static const char *const DRIVES[][2] = {
+    {"/data", "Internal storage"},
+    {"/mnt/ext0", "Extended storage"}, {"/mnt/ext1", "Extended storage 2"},
+    {"/mnt/usb0", "USB drive 1"}, {"/mnt/usb1", "USB drive 2"}, {"/mnt/usb2", "USB drive 3"},
+    {"/mnt/usb3", "USB drive 4"}, {"/mnt/usb4", "USB drive 5"}, {"/mnt/usb5", "USB drive 6"},
+    {"/mnt/usb6", "USB drive 7"}, {"/mnt/usb7", "USB drive 8"},
+};
+#define NDRIVES ((int)(sizeof(DRIVES) / sizeof(*DRIVES)))
+
+static int drive_of_folder(const char *folder) {
+    for (int i = 0; i < NDRIVES; i++) {
+        size_t n = strlen(DRIVES[i][0]);
+        if (!strncmp(folder, DRIVES[i][0], n) && folder[n] == '/') return i;
+    }
+    return 0;
+}
+
+static int drive_present(int i) {
+    return i == 0 || is_dir(DRIVES[i][0]);
+}
+
+enum { SET_RESCAN, SET_ROMDIR, SET_FOLDERS, SET_MISSING, SET_REDOWNLOAD, SET_AUTO, SET_MUSIC, SET_VOLUME, SET_RAIN, SET_EMPTY, SET_CLEAR_RECENT, SET_EMULATORS, SET_ABOUT, SET_COUNT };
 
 static void save_ui_settings(void) {
     char path[600], out[400];
     snprintf(path, sizeof(path), "%s", USER_DIR "/ui-settings.json");
     snprintf(out, sizeof(out),
              "{\n  \"showEmptySystems\": %s,\n  \"autoCovers\": %s,\n  \"music\": %s,\n"
-             "  \"musicVolume\": %d,\n  \"rain\": %s\n}\n",
+             "  \"musicVolume\": %d,\n  \"rain\": %s,\n  \"romFolder\": \"%s\"\n}\n",
              g_hide_empty ? "false" : "true", g_auto_covers ? "true" : "false", g_music_on ? "true" : "false",
-             g_music_volume, g_rain_on ? "true" : "false");
+             g_music_volume, g_rain_on ? "true" : "false", g_rom_folder);
     write_file(path, out);
 }
 
@@ -4017,6 +4218,9 @@ static void load_ui_settings(void) {
     if (cJSON_IsNumber(v)) g_music_volume = SDL_max(0, SDL_min(100, v->valueint));
     v = cJSON_GetObjectItem(o, "rain");
     if (cJSON_IsBool(v)) g_rain_on = cJSON_IsTrue(v);
+    v = cJSON_GetObjectItem(o, "romFolder");
+    if (cJSON_IsString(v) && v->valuestring[0] == '/' && strlen(v->valuestring) < sizeof(g_rom_folder))
+        scopy(g_rom_folder, sizeof(g_rom_folder), v->valuestring);
     cJSON_Delete(o);
 }
 
@@ -4152,11 +4356,24 @@ static void settings_row(int i, const char **label, const char **hint, char *val
         *hint = "Find games and emulators you've added or removed";
         *icon = ICON_STACK;
         break;
-    case SET_FOLDERS:
+    case SET_ROMDIR: {
+        static char hint_buf[160];
+        *label = "Games folder";
+        snprintf(hint_buf, sizeof(hint_buf), "%s. Press to pick another drive (games on every drive are found)",
+                 g_rom_folder);
+        *hint = hint_buf;
+        *icon = ICON_STACK;
+        scopy(value, vcap, DRIVES[drive_of_folder(g_rom_folder)][1]);
+        break;
+    }
+    case SET_FOLDERS: {
+        static char hint_buf[160];
         *label = "Create system folders";
-        *hint = "Make a folder in /data/roms for every system, plus a guide";
+        snprintf(hint_buf, sizeof(hint_buf), "Make a folder in %s for every system, plus a guide", g_rom_folder);
+        *hint = hint_buf;
         *icon = ICON_STACK;
         break;
+    }
     case SET_MISSING:
         *label = "Download missing covers";
         *hint = "Look again for games that have no cover";
@@ -4257,17 +4474,21 @@ static void draw_settings(void) {
     draw_text(&F_small, x + pad + 199, hy - F_small.line / 2.0f, "Back", 0xcfd5e6, 255);
 }
 
-/* /data/roms/<folder> for every system, and a guide to what goes where */
+/* <games folder>/<folder> for every system, and a guide to what goes where.
+ * Folders the app can't make itself (on a drive outside its sandbox) are made
+ * by jc-scan.elf with the next scan. */
 static void create_system_folders(void) {
     char root[600], rp[1300];
-    scopy(root, sizeof(root), "/data/roms");
+    scopy(root, sizeof(root), g_rom_folder);
     real_path(root, rp, sizeof(rp));
     mkdir(rp, 0777);
     int made = 0, had = 0, failed = 0;
+    g_scan_mkdirs[0] = 0;
     static char guide[16384];
     size_t gl = (size_t)snprintf(guide, sizeof(guide),
         "Jewel Case: put each system's games in its folder.\n"
-        "Folders can also be on a USB drive: /mnt/usb0/roms/<folder>.\n\n");
+        "Jewel Case looks in a roms folder on every drive: /data/roms, /mnt/usb0/roms,\n"
+        "/mnt/ext0/roms and so on.\n\n");
     for (int i = 0; i < g_nsys; i++) {
         System *sy = &g_sys[i];
         if (!sy->nfolders) continue;
@@ -4276,8 +4497,14 @@ static void create_system_folders(void) {
         real_path(path, rp, sizeof(rp));
         struct stat st;
         if (stat(rp, &st) == 0 && S_ISDIR(st.st_mode)) had++;
+        else if (is_dir(path)) had++;
         else if (mkdir(rp, 0777) == 0) made++;
-        else failed++;
+        else {
+            failed++;
+            char line[720];
+            snprintf(line, sizeof(line), "M\t%s\n", path);
+            strncat(g_scan_mkdirs, line, sizeof(g_scan_mkdirs) - strlen(g_scan_mkdirs) - 1);
+        }
         char exts[200] = "";
         for (int k = 0; k < sy->nexts; k++) {
             if (k) strncat(exts, ", ", sizeof(exts) - strlen(exts) - 1);
@@ -4287,15 +4514,36 @@ static void create_system_folders(void) {
             gl += (size_t)snprintf(guide + gl, sizeof(guide) - gl, "%-10s %s%s(%s)\n", sy->folders[0], sy->name,
                                    sy->folder_games ? ", one folder per game " : " ", exts);
     }
+#ifdef GS_NATIVE
+    if (failed) {
+        /* outside the sandbox: the scanner makes them, and the tabs are rebuilt */
+        busy_frame("Creating the folders...");
+        scan_everything();
+        load_recent();
+        load_favs();
+        rebuild_tabs();
+        int now = 0;
+        for (int i = 0; i < g_nsys; i++) {
+            if (!g_sys[i].nfolders) continue;
+            char path[700];
+            snprintf(path, sizeof(path), "%s/%s", root, g_sys[i].folders[0]);
+            if (is_dir(path)) now++;
+        }
+        made += SDL_max(0, now - had - made);
+        failed = SDL_max(0, failed - (now - had));
+    }
+#endif
+    g_scan_mkdirs[0] = 0;
     char gp[700];
     snprintf(gp, sizeof(gp), "%s/_Jewel Case folder guide.txt", root);
-    write_file(gp, guide);
+    if (write_file(gp, guide) != 0) write_file("/data/jewelcase/_Jewel Case folder guide.txt", guide);
     if (failed && !made && !had)
         open_modal("Couldn't create the folders",
-                   "The PS5 didn't let Jewel Case create folders in /data/roms.\n"
-                   "Create them over FTP instead, named like nes, snes, n64, gb, gba, nds, psx, ps2, gc, wii, switch.");
+                   "The PS5 didn't let Jewel Case create folders in %s.\n"
+                   "Create them over FTP instead, named like nes, snes, n64, gb, gba, nds, psx, ps2, gc, wii, switch.",
+                   root);
     else
-        flash("%d folders created, %d were already there%s", made, had, failed ? " (some failed)" : "");
+        flash("%d folders created in %s, %d were already there%s", made, root, had, failed ? " (some failed)" : "");
 }
 
 static void settings_activate(void) {
@@ -4317,6 +4565,22 @@ static void settings_activate(void) {
         flash("Found %d games", total);
         if (g_auto_covers) start_cover_helper();
         g_settings = 0;
+        break;
+    }
+    case SET_ROMDIR: {
+        /* the next drive that's plugged in */
+        int cur = drive_of_folder(g_rom_folder), next = cur;
+        for (int k = 1; k <= NDRIVES; k++) {
+            int c = (cur + k) % NDRIVES;
+            if (drive_present(c)) {
+                next = c;
+                break;
+            }
+        }
+        snprintf(g_rom_folder, sizeof(g_rom_folder), "%s/roms", DRIVES[next][0]);
+        save_ui_settings();
+        if (next == cur) flash("No other drive found. Plug one in, then Rescan games.");
+        else flash("Games folder: %s", g_rom_folder);
         break;
     }
     case SET_FOLDERS:
@@ -4618,6 +4882,17 @@ static int scan_with_helper(SDL_Window *win) {
     (void)win;
     static char req[24000];
     snprintf(req, sizeof(req), "jewelcase-scan 1\n");
+    strncat(req, g_scan_mkdirs, sizeof(req) - strlen(req) - 1);
+    /* the drives themselves, to know which are plugged in */
+    {
+        const char *dr[] = {"/mnt/ext0", "/mnt/ext1", "/mnt/usb0", "/mnt/usb1", "/mnt/usb2", "/mnt/usb3",
+                            "/mnt/usb4", "/mnt/usb5", "/mnt/usb6", "/mnt/usb7"};
+        for (size_t i = 0; i < sizeof(dr) / sizeof(*dr); i++) {
+            char line[64];
+            snprintf(line, sizeof(line), "0\t%s\n", dr[i]);
+            strncat(req, line, sizeof(req) - strlen(req) - 1);
+        }
+    }
     /* app folders: their sce_sys/param.json names the app (negative depth) */
     const char *hb[] = {"/data/homebrew", "/mnt/usb0/homebrew", "/mnt/usb1/homebrew", "/mnt/usb2/homebrew",
                         "/mnt/usb3/homebrew", "/mnt/ext0/homebrew", "/mnt/ext1/homebrew"};
@@ -4890,6 +5165,11 @@ int main(int argc, char **argv) {
             else if (!strcmp(tok, "emus")) in = IN_SETTINGS;
             else if (!strcmp(tok, "fav")) in = IN_FAV;
             else if (!strncmp(tok, "pos:", 4)) { g_pos = (float)atof(tok + 4); continue; }
+            else if (!strncmp(tok, "spin:", 5)) {
+                g_spin_game = entry_game(g_sel_game);
+                g_spin = (float)atof(tok + 5);
+                continue;
+            }
             else if (!strcmp(tok, "next")) in = IN_NEXT;
             else if (!strcmp(tok, "prev")) in = IN_PREV;
             handle(in, win);
@@ -5023,6 +5303,12 @@ int main(int argc, char **argv) {
                 g_pos = (float)g_sel_game;
                 g_tab_scroll = g_tab_target;
             }
+        }
+        {
+            static Uint32 spin_last;
+            float sdt = spin_last ? SDL_min(0.1f, (now - spin_last) / 1000.0f) : 0;
+            spin_last = now;
+            if (update_spin(sdt)) dirty = 1;
         }
         if (g_builds_left > 0) dirty = 1;
         if (g_details && g_det_t < 1) {

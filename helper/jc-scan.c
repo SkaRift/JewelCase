@@ -8,6 +8,7 @@
  * Request (/data/jewelcase-scan.txt), one folder per line:
  *   jewelcase-scan 1
  *   <depth>\t<path>
+ *   M\t<path>                       create this folder (and its parents) first
  * Index (/data/jewelcase-index.txt):
  *   jewelcase-index 1
  *   D\t<path>                       a folder
@@ -158,6 +159,19 @@ main(void) {
     char *tab = strchr(line, '\t');
     if(!tab) continue;
     *tab = 0;
+    if(line[0] == 'M') {
+      /* make a folder Jewel Case can't make from inside its sandbox */
+      char *p = tab + 1;
+      for(char *c = p + 1; *c; c++)
+        if(*c == '/') {
+          *c = 0;
+          mkdir(p, 0777);
+          *c = '/';
+        }
+      mkdir(p, 0777);
+      chmod(p, 0777);
+      continue;
+    }
     int depth = atoi(line);
     const char *path = tab + 1;
     int app_levels = depth < 0 ? 2 : 0;
