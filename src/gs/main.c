@@ -3860,11 +3860,18 @@ static int update_spin(float dt) {
  * and faster; a cartridge turns around its upright axis; both fly up and out. */
 static Game *g_launch_game;
 static float g_launch_t;        /* 0..1 through the animation */
+static Uint32 g_launch_clear;   /* after take-off it stays gone until then (0: until it fails) */
 #define LAUNCH_MS 950
 
 static int draw_launch_anim(Game *g, float cx, float cy, float w, float h, Uint8 bright, Uint8 alpha) {
     if (g != g_launch_game || !g->media) return 0;
+    if (g_launch_clear && SDL_TICKS_PASSED(SDL_GetTicks(), g_launch_clear)) {
+        g_launch_game = NULL;   /* still here long after the game started: show it again */
+        g_launch_clear = 0;
+        return 0;
+    }
     float t = g_launch_t;
+    if (t >= 1) return 1;       /* flown off: nothing to draw while the game starts */
     float f = SDL_max(0.0f, (t - 0.28f) / 0.72f);
     float lift = f * f * (cy + h * 0.7f + 60);       /* up and off the top of the screen */
     const MediaTpl *mt = &MEDIA_TPL[tpl_of(&g_sys[g->sys])];
@@ -5707,8 +5714,8 @@ static void launch_game(Game *g, SDL_Window *win) {
         present(win);
         SDL_Delay(8);
     }
-    g_launch_t = 1;
-    g_launch_game = NULL;
+    g_launch_t = 1;             /* it stays off the screen while the game starts */
+    g_launch_clear = 0;
     g_launching = 1;
     render();
     draw_launching(g->title);
@@ -5717,6 +5724,8 @@ static void launch_game(Game *g, SDL_Window *win) {
     music_stop();
     int st = send_launch(&lc);
     g_launching = 0;
+    if (st == 200 || st == 0) g_launch_clear = SDL_GetTicks() + 20000;   /* Jewel Case closes before this */
+    else g_launch_game = NULL;                                           /* back on the shelf */
     if (st == -2) {
         open_modal("Couldn't start the game",
                    "Jewel Case hands app launches to the ELF loader on port 9021 (etaHEN's,\n"
