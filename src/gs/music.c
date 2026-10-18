@@ -217,3 +217,113 @@ void music_stop(void) {
 int music_playing(void) { return g_started && g_run; }
 
 const char *music_now(void) { return g_now_playing; }
+
+
+/* ------------------------------------------------------------------------ */
+/* menu sounds: a low, soft retro "boop", made here (nothing recorded)       */
+/* ------------------------------------------------------------------------ */
+
+#include <math.h>
+
+#define SFX_KINDS 2
+static int16_t *g_sfx[SFX_KINDS];
+static int g_sfx_len[SFX_KINDS];
+static volatile int g_sfx_on = 1;
+static volatile int g_sfx_req = -1;      /* the sound to start, -1 none */
+static pthread_mutex_t g_sfx_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_sfx_cv = PTHREAD_COND_INITIALIZER;
+static int g_sfx_started;
+
+/* kind 0: moving between games and options; 1: changing system (a little lower) */
+static void sfx_make(int kind) {
+    float f0 = kind ? 196.0f : 262.0f, f1 = kind ? 147.0f : 208.0f;   /* a falling pitch */
+    float dur = kind ? 0.095f : 0.075f;
+    int n = (int)(dur * OUT_RATE);
+    int16_t *pcm = malloc(sizeof(int16_t) * 2 * n);
+    if (!pcm) return;
+    float phase = 0, lp = 0;
+    const float a_lp = expf(-2.0f * 3.14159265f * 1800.0f / OUT_RATE);   /* rounds off the square */
+    for (int i = 0; i < n; i++) {
+        float t = (float)i / OUT_RATE, u = t / dur;
+        float f = f0 + (f1 - f0) * u;
+        phase += f / OUT_RATE;
+        if (phase >= 1) phase -= 1;
+        float sq = phase < 0.5f ? 1.0f : -1.0f;
+        lp = (1 - a_lp) * sq + a_lp * lp;
+        float env = fminf(1.0f, t / 0.003f) * expf(-t / (dur * 0.35f));
+        float v = lp * env * 0.32f;
+        int sv = (int)(v * 32767);
+        pcm[i * 2] = pcm[i * 2 + 1] = (int16_t)sv;
+    }
+    g_sfx[kind] = pcm;
+    g_sfx_len[kind] = n;
+}
+
+#ifdef GS_NATIVE
+static int g_sfx_port = -1;
+#endif
+
+static void *sfx_thread(void *arg) {
+    (void)arg;
+#ifdef GS_NATIVE
+    sceAudioOutInit();
+    g_sfx_port = sceAudioOutOpen(0xFF, 0, 0, BLOCK, OUT_RATE, 1);
+    if (g_sfx_port < 0) return NULL;
+#endif
+    int16_t out[BLOCK * 2];
+    for (;;) {
+        pthread_mutex_lock(&g_sfx_mu);
+        while (g_sfx_req < 0) pthread_cond_wait(&g_sfx_cv, &g_sfx_mu);
+        int kind = g_sfx_req;
+        g_sfx_req = -1;
+        pthread_mutex_unlock(&g_sfx_mu);
+        const int16_t *pcm = g_sfx[kind];
+        int len = g_sfx_len[kind], pos = 0;
+        while (pcm && pos < len) {
+            float gain = g_volume / 100.0f;
+            for (int o = 0; o < BLOCK; o++, pos++) {
+                int l = pos < len ? (int)(pcm[pos * 2] * gain) : 0;
+                out[o * 2] = out[o * 2 + 1] = (int16_t)l;
+            }
+#ifdef GS_NATIVE
+            sceAudioOutOutput(g_sfx_port, out);
+#else
+            usleep(BLOCK * 1000000 / OUT_RATE);
+#endif
+            /* a new sound cuts this one short, so quick presses don't pile up */
+            if (g_sfx_req >= 0) {
+                pthread_mutex_lock(&g_sfx_mu);
+                if (g_sfx_req >= 0) {
+                    kind = g_sfx_req;
+                    g_sfx_req = -1;
+                    pcm = g_sfx[kind];
+                    len = g_sfx_len[kind];
+                    pos = 0;
+                }
+                pthread_mutex_unlock(&g_sfx_mu);
+            }
+        }
+#ifdef GS_NATIVE
+        memset(out, 0, sizeof out);
+        sceAudioOutOutput(g_sfx_port, out);   /* end on silence */
+#endif
+    }
+    return NULL;
+}
+
+void sfx_set_on(int on) { g_sfx_on = on; }
+
+void sfx_play(int kind) {
+    if (!g_sfx_on || kind < 0 || kind >= SFX_KINDS || g_volume <= 0) return;
+    if (!g_sfx_started) {
+        for (int k = 0; k < SFX_KINDS; k++) sfx_make(k);
+        pthread_t th;
+        if (pthread_create(&th, NULL, sfx_thread, NULL) != 0) return;
+        pthread_detach(th);
+        g_sfx_started = 1;
+    }
+    pthread_mutex_lock(&g_sfx_mu);
+    g_sfx_req = kind;
+    pthread_cond_signal(&g_sfx_cv);
+    pthread_mutex_unlock(&g_sfx_mu);
+}

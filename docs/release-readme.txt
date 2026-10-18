@@ -157,7 +157,8 @@ recording, so there's nothing to license). To play your own music instead,
 put MP3 files in /data/jewelcase/music. Jewel Case creates this folder the
 first time it runs. Songs play shuffled and looped while you browse, and
 fade out when a game starts.
-Settings: music on/off, and volume.
+Settings: music on/off, volume, and menu sounds (a soft boop when you
+move between games and options) on/off.
 
 
 CONTROLS

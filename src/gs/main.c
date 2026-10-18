@@ -65,6 +65,8 @@ void gs_free(void *p);
 #define free(p) gs_free(p)
 
 int music_start(char (*paths)[1024], int n);
+void sfx_play(int kind);      /* 0 moving between games / options, 1 changing system */
+void sfx_set_on(int on);
 void music_set_volume(int pct);
 void music_stop(void);
 int music_playing(void);
@@ -5150,6 +5152,7 @@ static void draw_settings(void);
 
 /* ---- rain: streaks falling behind the carousel, ripples on the floor ---- */
 static int g_rain_on = 1;
+static int g_sfx_enabled = 1;   /* menu sounds */
 static int g_music_on = 1;
 static int g_music_volume = 60;
 #define RAIN_FAR 130
@@ -5424,16 +5427,16 @@ static int drive_present(int i) {
     return i == 0 || is_dir(DRIVES[i][0]);
 }
 
-enum { SET_RESCAN, SET_ROMDIR, SET_FOLDERS, SET_MISSING, SET_REDOWNLOAD, SET_AUTO, SET_MUSIC, SET_VOLUME, SET_RAIN, SET_EMPTY, SET_CLEAR_RECENT, SET_EMULATORS, SET_CREDITS, SET_ABOUT, SET_COUNT };
+enum { SET_RESCAN, SET_ROMDIR, SET_FOLDERS, SET_MISSING, SET_REDOWNLOAD, SET_AUTO, SET_MUSIC, SET_VOLUME, SET_SOUNDS, SET_RAIN, SET_EMPTY, SET_CLEAR_RECENT, SET_EMULATORS, SET_CREDITS, SET_ABOUT, SET_COUNT };
 
 static void save_ui_settings(void) {
     char path[600], out[400];
     snprintf(path, sizeof(path), "%s", USER_DIR "/ui-settings.json");
     snprintf(out, sizeof(out),
              "{\n  \"showEmptySystems\": %s,\n  \"autoCovers\": %s,\n  \"music\": %s,\n"
-             "  \"musicVolume\": %d,\n  \"rain\": %s,\n  \"romFolder\": \"%s\"\n}\n",
+             "  \"musicVolume\": %d,\n  \"rain\": %s,\n  \"menuSounds\": %s,\n  \"romFolder\": \"%s\"\n}\n",
              g_hide_empty ? "false" : "true", g_auto_covers ? "true" : "false", g_music_on ? "true" : "false",
-             g_music_volume, g_rain_on ? "true" : "false", g_rom_folder);
+             g_music_volume, g_rain_on ? "true" : "false", g_sfx_enabled ? "true" : "false", g_rom_folder);
     write_file(path, out);
 }
 
@@ -5454,6 +5457,9 @@ static void load_ui_settings(void) {
     if (cJSON_IsNumber(v)) g_music_volume = SDL_max(0, SDL_min(100, v->valueint));
     v = cJSON_GetObjectItem(o, "rain");
     if (cJSON_IsBool(v)) g_rain_on = cJSON_IsTrue(v);
+    v = cJSON_GetObjectItem(o, "menuSounds");
+    if (cJSON_IsBool(v)) g_sfx_enabled = cJSON_IsTrue(v);
+    sfx_set_on(g_sfx_enabled);
     v = cJSON_GetObjectItem(o, "romFolder");
     if (cJSON_IsString(v) && v->valuestring[0] == '/' && strlen(v->valuestring) < sizeof(g_rom_folder))
         scopy(g_rom_folder, sizeof(g_rom_folder), v->valuestring);
@@ -5643,6 +5649,12 @@ static void settings_row(int i, const char **label, const char **hint, char *val
         *icon = ICON_DISC;
         snprintf(value, vcap, "%d%%", g_music_volume);
         break;
+    case SET_SOUNDS:
+        *label = "Menu sounds";
+        *hint = "A soft boop when you move between games and options";
+        *icon = ICON_CHIP;
+        scopy(value, vcap, g_sfx_enabled ? "On" : "Off");
+        break;
     case SET_RAIN:
         *label = "Rain effect";
         *hint = "Rain falling behind the games";
@@ -5682,7 +5694,7 @@ static void settings_row(int i, const char **label, const char **hint, char *val
 
 static void draw_settings(void) {
     fill_rect(0, 0, SCREEN_W, SCREEN_H, 0x05060a, 175);
-    int w = 1060, row_h = 58, gap = 5, pad = 26;
+    int w = 1060, row_h = 54, gap = 5, pad = 26;
     int h = pad + F_title.line + 26 + SET_COUNT * (row_h + gap) + 70 + pad - 20;
     int x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2;
     round_rect(x - 1, y - 1, w + 2, h + 2, 29, 0x9aa3c8, 60);
@@ -5877,6 +5889,12 @@ static void settings_activate(void) {
         g_music_volume = g_music_volume >= 100 ? 20 : g_music_volume + 20;
         music_set_volume(g_music_volume);
         save_ui_settings();
+        break;
+    case SET_SOUNDS:
+        g_sfx_enabled = !g_sfx_enabled;
+        sfx_set_on(g_sfx_enabled);
+        save_ui_settings();
+        sfx_play(0);   /* so you hear what it is when turning it on */
         break;
     case SET_RAIN:
         g_rain_on = !g_rain_on;
@@ -6085,6 +6103,7 @@ static void select_entry(int i) {
     if (i >= g_nentries) i = 0;
     if (i != g_sel_entry) {
         g_sel_entry = i;
+        sfx_play(1);
         g_sel_game = 0;
         g_pos = 0;
         trim_media();
@@ -6099,6 +6118,7 @@ static void select_game(int i) {
     if (i != g_sel_game) {
         g_sel_game = i;
         trim_media();
+        sfx_play(0);
     }
 }
 
@@ -6116,8 +6136,8 @@ static void handle(int in, SDL_Window *win) {
     }
     if (g_settings) {
         if (in != IN_OK) g_set_confirm = -1;
-        if (in == IN_UP) g_set_sel = (g_set_sel + SET_COUNT - 1) % SET_COUNT;
-        else if (in == IN_DOWN) g_set_sel = (g_set_sel + 1) % SET_COUNT;
+        if (in == IN_UP) { g_set_sel = (g_set_sel + SET_COUNT - 1) % SET_COUNT; sfx_play(0); }
+        else if (in == IN_DOWN) { g_set_sel = (g_set_sel + 1) % SET_COUNT; sfx_play(0); }
         else if (in == IN_OK) settings_activate();
         else if (in == IN_BACK || in == IN_SETTINGS) g_settings = 0;
         return;
