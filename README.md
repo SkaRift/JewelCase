@@ -130,8 +130,8 @@ Jewel Case by **SkaRift**.
 Built on [ps5-native-app-boilerplate](https://github.com/blackbearreloaded/ps5-native-app-boilerplate) (BlackBearReloaded)
 and the [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk), with SDL2, cJSON, stb,
 dr_mp3 and the Poppins font. The cartridges, cards and discs are rendered from CC BY 4.0 models by
-Steven-Bennis, HippoStance, Karolina D, Vxcl, Pcwer, crocoman2019 and enjoyboy
-([credits](assets/media/CREDITS.md)). Box art and logos come from
+Steven-Bennis, HippoStance, Karolina D, Vxcl, Pcwer, crocoman2019 and enjoyboy, and the N64
+cartridge from a CC BY-NC 4.0 model by ejpman ([credits](assets/media/CREDITS.md)). Box art and logos come from
 [libretro-thumbnails](https://github.com/libretro-thumbnails), disc scans from the
 [LaunchBox Games Database](https://gamesdb.launchbox-app.com) and
 [GameTDB](https://www.gametdb.com). Thanks to the etaHEN and

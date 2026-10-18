@@ -163,8 +163,9 @@ Built with and thanks to:
   the LaunchBox database
   Cartridge, card and disc renders: 3D models by Steven-Bennis (SNES),
   HippoStance (NES), Karolina D (Game Boy), Vxcl (GBA), Pcwer (DS),
-  crocoman2019 (Switch) and enjoyboy (disc), CC BY 4.0, changed for
-  Jewel Case (labels blanked, logos removed). Links in
+  crocoman2019 (Switch) and enjoyboy (disc), CC BY 4.0, and ejpman
+  (N64, CC BY-NC 4.0: non-commercial), changed for Jewel Case (labels
+  blanked, logos removed). Links in
   THIRD_PARTY_NOTICES.md in the source repository.
   etaHEN, ShadowMountPlus, and the authors of every emulator above.
 

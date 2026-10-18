@@ -26,6 +26,8 @@ CONFIGS = {
     'card': dict(model='nintendo_ds_cartridge', axis=2, sign=1, up=1, label=('object', ['Object_7', 'Object_4'])),
     'card_white': dict(model='nintendo_ds_cartridge', axis=2, sign=1, up=1, label=('object', ['Object_7', 'Object_4']),
                        body_color=(0.80, 0.80, 0.82)),
+    'chunky': dict(model='n64_cartridge', stl='N64_Cartridge.stl', axis=1, sign=-1, up=2,
+                   label=('plane', None), rect=(0.29, 0.245, 0.71, 0.73), body=(0.11, 0.112, 0.12)),
     'minicard': dict(model='nintendo_switch_cartridge', axis=1, sign=1, up=2, label=('object', ['texture_texture_0'])),
 }
 
@@ -38,7 +40,21 @@ RES = int(os.environ.get('RES', '1000'))
 
 for o in list(bpy.data.objects):
     bpy.data.objects.remove(o)
-bpy.ops.import_scene.gltf(filepath=f"{M}/{cfg['model']}/scene.gltf")
+if 'stl' in cfg:
+    bpy.ops.wm.stl_import(filepath=f"{M}/{cfg['model']}/{cfg['stl']}")
+    bm = bpy.data.materials.new('jc_body')
+    bm.use_nodes = True
+    bb = bm.node_tree.nodes['Principled BSDF']
+    bb.inputs['Base Color'].default_value = (*cfg.get('body', (0.1, 0.1, 0.1)), 1)
+    bb.inputs['Roughness'].default_value = 0.55
+    for o in bpy.context.scene.objects:
+        if o.type == 'MESH':
+            o.data.materials.clear()
+            o.data.materials.append(bm)
+            for poly in o.data.polygons:
+                poly.use_smooth = False
+else:
+    bpy.ops.import_scene.gltf(filepath=f"{M}/{cfg['model']}/scene.gltf")
 sc = bpy.context.scene
 meshes = [o for o in sc.objects if o.type == 'MESH']
 

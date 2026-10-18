@@ -158,6 +158,11 @@ Jewel Case (rendered front-on, labels blanked, logos removed, some recoloured):
 - "Nintendo Switch Cartridge" by crocoman2019 — https://sketchfab.com/3d-models/nintendo-switch-cartridge-94e7c74e664849d490f136cb8acca86a
 - "CD Jewel Case" (the disc) by enjoyboy, Blend Swap
 
+The N64 cartridge is a render of "N64 Cartridge" by ejpman
+(https://www.printables.com/model/166312-n64-cartridge), licensed under Creative Commons
+Attribution-NonCommercial 4.0 (https://creativecommons.org/licenses/by-nc/4.0/), rendered
+front-on with a blank label for Jewel Case. It may not be used commercially.
+
 See assets/media/CREDITS.md.
 
 ## Downloaded art
