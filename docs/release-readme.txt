@@ -59,40 +59,54 @@ After adding games, use Settings > Rescan games (or restart Jewel Case).
 
 UPDATES AND DLC (SWITCH, WII U)
 -------------------------------
-Jewel Case starts games; it doesn't install anything into an emulator.
-Switch and Wii U emulators need a game's update and DLC installed into
-their own storage once, from the emulator's own menu.
+Switch with ProsperoEden (v1.005 or newer): nothing to install.
+ProsperoEden applies a game's newest update and all its DLC every time the
+game starts, from its own game files folder only: each game in a folder of
+its own in its roms folder, the update and DLC files beside it (any names):
 
-Keep the update and DLC files in the same folder as the game:
+    <ProsperoEden game files folder>/roms/Super Mario Odyssey/
+        Super Mario Odyssey.nsp
+        Super Mario Odyssey 1.1 update.nsp
+        Super Mario Odyssey DLC.nsp
 
-    /data/roms/switch/Super Mario Odyssey 1.0.nsp
-    /data/roms/switch/Super Mario Odyssey 1.1 update.nsp
+The game files folder is the one picked in ProsperoEden's Settings > Game
+files (/data/prosperoeden if you never picked one). Jewel Case reads that
+setting and lists the Switch games there too, so keep your Switch games
+in that one place and both apps use the same files: one copy of each.
+Everything in a game's folder is shown as that one game.
 
-Jewel Case shows them as one game, not three. It spots them by words like
-"update", "upd", "patch" or "DLC" in the file name, or by the Switch title
-ID in brackets (an update's ends in 800). An update with no game next to
-it is shown on its own.
+The details screen says:
+  green "Update 1.1, 1 DLC - applied when the game starts"   all set
+  amber "Update 1.1 - not applied"   the files aren't in ProsperoEden's
+        folder (for example in /data/roms/switch). Move the game and its
+        files into a folder of their own there, then Settings > Rescan games.
 
-To install one, with no extra copies:
+Other emulators (Wii U in Cemu, older ProsperoEden): Jewel Case starts
+games; it doesn't install anything into an emulator. Keep the update and
+DLC files next to the game:
+
+    /data/roms/wiiu/Some Game.wua
+    /data/roms/wiiu/Some Game update.wua
+
+Jewel Case shows them as one game. It spots them by words like "update",
+"upd", "patch" or "DLC" in the file name, or by the Switch title ID in
+brackets (an update's ends in 800). An update with no game is shown on
+its own. To install one, with no extra copies:
   1. In the emulator, choose its "install files" option and pick the file
-     straight from your Jewel Case games folder (above). No need to copy
-     it anywhere else first.
+     straight from your Jewel Case games folder.
   2. In Jewel Case, open the game's details (Square), press Square again
      for File info, then Cross: Mark installed.
-  3. Optional: delete the update / DLC file from the games folder to save
-     space. The emulator keeps its installed copy, and Jewel Case still
-     shows "Update 1.1 installed".
+  3. Optional: delete the file from the games folder to save space. The
+     emulator keeps its installed copy, and Jewel Case still shows
+     "Update 1.1 installed".
+amber "not installed" = the file is there, not marked yet; green
+"installed" = you marked it (even if the file is gone). A newer update file
+turns it amber again. Jewel Case can't see inside the emulator, so
+"installed" means you marked it; Cross: Mark not installed undoes it. The
+marks are kept in /data/jewelcase/installed.json.
 
-What you see:
-  amber "Update 1.1 not installed"   the file is there, not marked yet
-  green "Update 1.1 installed"       you marked it (even if the file is gone)
-A newer update file (say 1.2) turns it amber again until you mark it.
-
-Jewel Case can't see inside the emulator, so "installed" means you marked
-it. Cross: Mark not installed in File info undoes it. The marks are kept in
-/data/jewelcase/installed.json. Versions come from file names
-("1.0", "v1.2.0", "[v131072]") and show on the details screen for any
-system.
+Versions come from file names ("1.0", "v1.2.0", "[v131072]") and show on
+the details screen for any system.
 
 
 COVERS

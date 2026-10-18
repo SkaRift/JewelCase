@@ -104,33 +104,51 @@ run.
 
 ### Updates and DLC
 
-Switch and Wii U emulators need a game's update and DLC installed into their own storage
-once, from the emulator's menu. Jewel Case starts games; it doesn't install anything into an
-emulator. Keep the files next to the game:
+**Switch with ProsperoEden (v1.005 or newer): nothing to install.** ProsperoEden applies a
+game's newest update and all its DLC every time the game starts, from its own game files
+folder only: each game in a folder of its own in its `roms` folder, with the update and DLC
+files beside it (any names).
 
 ```
-/data/roms/switch/Super Mario Odyssey 1.0.nsp
-/data/roms/switch/Super Mario Odyssey 1.1 update.nsp
+<ProsperoEden game files folder>/roms/Super Mario Odyssey/
+    Super Mario Odyssey.nsp
+    Super Mario Odyssey 1.1 update.nsp
+    Super Mario Odyssey DLC.nsp
 ```
 
-Jewel Case shows these as one game. It recognises updates and DLC by "update", "upd",
-"patch" or "DLC" in the name, or by the Switch title ID in brackets (an update's ends in
-`800`).
+The game files folder is the one picked in ProsperoEden's **Settings → Game files**
+(`/data/prosperoeden` if you never picked one). Jewel Case reads that setting and lists the
+Switch games there too, so keep your Switch games in that one place: both apps use the same
+files, one copy of each. Everything in a game's folder shows as that one game, and the details
+screen says **Update 1.1, 1 DLC · applied when the game starts** in green. If the files are
+somewhere ProsperoEden doesn't look (such as `/data/roms/switch`), it says **not applied** in
+amber and tells you where to move them.
 
-To install one, with no extra copies:
+**Other emulators** (Wii U in Cemu, older ProsperoEden versions) need updates and DLC installed
+into their own storage once, from their own menu. Jewel Case starts games; it doesn't install
+anything into an emulator. Keep the files next to the game:
+
+```
+/data/roms/wiiu/Some Game.wua
+/data/roms/wiiu/Some Game update.wua
+```
+
+Jewel Case shows these as one game. It recognises updates and DLC by "update", "upd", "patch"
+or "DLC" in the name, or by the Switch title ID in brackets (an update's ends in `800`). To
+install one, with no extra copies:
 
 1. In the emulator, use its install option and pick the file straight from your Jewel Case
-   games folder. There's no need to copy it anywhere else first.
+   games folder.
 2. In Jewel Case, open the game's details (□), press □ again for **File info**, then
    **✕ Mark installed**.
-3. Optional: delete the update or DLC file from the games folder. The emulator keeps its
-   installed copy, and Jewel Case still shows **Update 1.1 installed**.
+3. Optional: delete the file from the games folder. The emulator keeps its installed copy,
+   and Jewel Case still shows **Update 1.1 installed**.
 
-Amber **Update 1.1 not installed** means the file is there but not marked yet. Green
-**Update 1.1 installed** means you've marked it. A newer update file turns it amber again
-until you mark that one too. Jewel Case can't look inside the emulator, so "installed" is
-whatever you marked; **✕ Mark not installed** undoes it. Marks are kept in
-`/data/jewelcase/installed.json`.
+Amber **not installed** means the file is there but not marked yet; green **installed** means
+you've marked it. A newer update file turns it amber again. Jewel Case can't look inside the
+emulator, so "installed" is whatever you marked; **✕ Mark not installed** undoes it. Marks are
+kept in `/data/jewelcase/installed.json`. Versions come from file names (`1.0`, `v1.2.0`,
+`[v131072]`) and show on the details screen for any system.
 
 ## Controls
 
@@ -161,7 +179,8 @@ make host     # PC test build, needs SDL2 (build-host/jewelcase --fsroot <folder
 - Cover matching works from file names, so heavily renamed files may get no cover. Add your
   own art for those.
 - Jewel Case can't install updates or DLC into an emulator, or check what the emulator has
-  installed. Install them from the emulator's own menu and mark them in File info.
+  installed. ProsperoEden applies them by itself from its game files folder; for other
+  emulators, install them from the emulator's menu and mark them in File info.
 
 ## Credits
 
