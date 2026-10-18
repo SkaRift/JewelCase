@@ -559,6 +559,7 @@ typedef struct Game {
     char ver[32];               /* its version, from the file name ("1.0", "v131072"), or "" */
     char upd[32];               /* the newest update file next to it: its version, or "yes" */
     int nupd, ndlc;             /* update and DLC files grouped under it */
+    char grouped[700];          /* their file names, one per line */
 } Game;
 
 typedef struct {
@@ -1412,6 +1413,12 @@ static void group_updates(System *s) {
             continue;
         }
         Game *b = &s->games[base];
+        const char *un = strrchr(u->path, '/');
+        un = un ? un + 1 : u->path;
+        if (strlen(b->grouped) + strlen(un) + 2 < sizeof(b->grouped)) {
+            strcat(b->grouped, un);
+            strcat(b->grouped, "\n");
+        }
         if (kind == 1) {
             b->nupd++;
             if (!b->upd[0] || !strcmp(b->upd, "yes") || (u->ver[0] && version_newer(u->ver, b->upd)))
@@ -1620,6 +1627,83 @@ static int toggle_fav(const char *path) {
     }
     cJSON_Delete(arr);
     return at < 0;
+}
+
+/* ------------------------------------------------------------------------ */
+/* updates and DLC marked as installed in the emulator                       */
+/* ------------------------------------------------------------------------ */
+
+/* Jewel Case can't see inside an emulator, so you tell it: game path ->
+ * {"update": "1.1", "dlc": 2} in /data/jewelcase/installed.json */
+static cJSON *g_inst;
+
+static void load_installed(void) {
+    if (g_inst) cJSON_Delete(g_inst);
+    char *txt = read_file(USER_DIR "/installed.json", NULL);
+    g_inst = txt ? cJSON_Parse(txt) : NULL;
+    free(txt);
+    if (!cJSON_IsObject(g_inst)) {
+        cJSON_Delete(g_inst);
+        g_inst = cJSON_CreateObject();
+    }
+}
+
+static void inst_of(const Game *g, const char **upd, int *dlc) {
+    *upd = "";
+    *dlc = 0;
+    cJSON *o = g_inst ? cJSON_GetObjectItem(g_inst, g->path) : NULL;
+    if (!o) return;
+    cJSON *u = cJSON_GetObjectItem(o, "update"), *d = cJSON_GetObjectItem(o, "dlc");
+    if (cJSON_IsString(u)) *upd = u->valuestring;
+    if (cJSON_IsNumber(d)) *dlc = (int)d->valuedouble;
+}
+
+/* 0: nothing to say; 1: something here isn't installed yet; 2: all installed */
+static int upd_state(const Game *g, char *text, size_t cap) {
+    const char *ru;
+    int rd;
+    inst_of(g, &ru, &rd);
+    text[0] = 0;
+    int bad = 0, good = 0, n = 0;
+    if (g->nupd) {
+        int ok = ru[0] && (!strcmp(g->upd, "yes") || !strcmp(ru, "yes") ? 1 : !version_newer(g->upd, ru));
+        n += snprintf(text + n, cap - n, "Update%s%s %s", strcmp(g->upd, "yes") ? " " : "",
+                      strcmp(g->upd, "yes") ? g->upd : "", ok ? "installed" : "not installed");
+        if (ok) good = 1; else bad = 1;
+    } else if (ru[0]) {
+        n += snprintf(text + n, cap - n, "Update%s%s installed", strcmp(ru, "yes") ? " " : "", strcmp(ru, "yes") ? ru : "");
+        good = 1;
+    }
+    if (n >= (int)cap) return bad ? 1 : good ? 2 : 0;
+    if (g->ndlc) {
+        int ok = rd >= g->ndlc;
+        snprintf(text + n, cap - n, "%s%d DLC %s", n ? "  \xc2\xb7  " : "", g->ndlc, ok ? "installed" : "not installed");
+        if (ok) good = 1; else bad = 1;
+    } else if (rd) {
+        snprintf(text + n, cap - n, "%s%d DLC installed", n ? "  \xc2\xb7  " : "", rd);
+        good = 1;
+    }
+    return bad ? 1 : good ? 2 : 0;
+}
+
+static int inst_marked(const Game *g) { return g_inst && cJSON_GetObjectItem(g_inst, g->path) != NULL; }
+
+/* mark what's next to the game as installed, or forget it */
+static void inst_toggle(const Game *g) {
+    if (!g_inst) load_installed();
+    if (inst_marked(g)) {
+        cJSON_DeleteItemFromObject(g_inst, g->path);
+    } else {
+        cJSON *o = cJSON_CreateObject();
+        if (g->nupd) cJSON_AddStringToObject(o, "update", g->upd);
+        if (g->ndlc) cJSON_AddNumberToObject(o, "dlc", g->ndlc);
+        cJSON_AddItemToObject(g_inst, g->path, o);
+    }
+    char *out = cJSON_Print(g_inst);
+    if (out) {
+        write_file(USER_DIR "/installed.json", out);
+        free(out);
+    }
 }
 
 /* ------------------------------------------------------------------------ */
@@ -2885,7 +2969,12 @@ static char g_scan_status[200] = "direct";
 static int g_scan_failed;
 static int g_builds_left;           /* carousel images still to build */
 
+static char g_modal_action[64];      /* Cross does this in the modal, "" none */
+static struct Game *g_modal_game;
+
 static void open_modal(const char *title, const char *fmt, ...) {
+    g_modal_action[0] = 0;
+    g_modal_game = NULL;
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(g_modal_text, sizeof(g_modal_text), fmt, ap);
@@ -3777,6 +3866,21 @@ static void draw_glass(int x, int y, int w, int h, int r, Uint8 a) {
     round_rect(x + 1, y + 1, w - 2, h - 2, r - 1, 0x10131f, (Uint8)(a * 0.7f));
 }
 
+/* a pill in a colour: amber for something to do, green for done */
+static int chip_tint(int x, int cy, int icon, const char *label, int draw, Uint32 col) {
+    int h = 46, pad = 20, iw = 30;
+    int w = pad * 2 + iw + (int)text_width(&F_chip, label);
+    if (draw) {
+        round_rect(x, cy - h / 2, w, h, h / 2, col, 150);
+        round_rect(x + 2, cy - h / 2 + 2, w - 4, h - 4, h / 2 - 2, 0x14111a, 235);
+        draw_icon(icon, x + pad - 2, cy - 12, 24, col, 255);
+        draw_text(&F_chip, x + pad + iw, cy - F_chip.line / 2.0f, label, col, 255);
+    }
+    return w;
+}
+#define UPD_TODO 0xffc857
+#define UPD_DONE 0x6fd39a
+
 /* a pill: optional icon and a label; returns its width. measure only when !draw */
 static int chip(int x, int cy, int icon, const char *label, int draw) {
     int h = 46, pad = 20, iw = icon >= 0 ? 30 : 0;
@@ -3829,10 +3933,15 @@ static void draw_info(void) {
     snprintf(cnt, sizeof(cnt), "%d %s", s->ngames, s->ngames == 1 ? "game" : "games");
     struct { int icon; const char *t; } chips[] = {
         {icon_of(s), s->name}, {ICON_CLOCK, ago}, {ICON_CHIP, emu}, {ICON_STACK, cnt}};
+    char ustate[160];
+    int todo = upd_state(g, ustate, sizeof(ustate)) == 1;
+    const char *ulabel = g->nupd && g->ndlc ? "Update / DLC not installed" : g->nupd ? "Update not installed" : "DLC not installed";
     int total = 0, gap = 14;
     for (int i = 0; i < 4; i++) total += chip(0, 0, chips[i].icon, chips[i].t, 0) + (i ? gap : 0);
+    if (todo) total += gap + chip_tint(0, 0, ICON_DOWNLOAD, ulabel, 0, UPD_TODO);
     int x = (SCREEN_W - total) / 2, cy = 812;
     for (int i = 0; i < 4; i++) x += chip(x, cy, chips[i].icon, chips[i].t, 1) + gap;
+    if (todo) chip_tint(x, cy, ICON_DOWNLOAD, ulabel, 1, UPD_TODO);
 
     /* page dots */
     int n = entry_count();
@@ -4280,29 +4389,34 @@ static void draw_details(Uint32 accent) {
     else scopy(emu, sizeof(emu), g_emus[s->emu].name);
     snprintf(cnt, sizeof(cnt), "%d of %d", g_sel_game + 1, entry_count());
     /* its version, and any update / DLC files grouped under it */
-    char ver[64] = "", upd[96] = "";
+    char ver[64] = "", upd[160];
     if (g->ver[0]) snprintf(ver, sizeof(ver), "Version %s", g->ver);
-    if (g->nupd || g->ndlc) {
-        int n = 0;
-        if (g->nupd)
-            n += snprintf(upd + n, sizeof(upd) - n, strcmp(g->upd, "yes") ? "Update %s" : "Update", g->upd);
-        if (g->ndlc && n < (int)sizeof(upd))
-            snprintf(upd + n, sizeof(upd) - n, "%s%d DLC", n ? " \xc2\xb7 " : "", g->ndlc);
-    }
+    int ust = upd_state(g, upd, sizeof(upd));
     int cx = x, cyy = y + 23;
     struct { int icon; const char *t; } chips[] = {
-        {ICON_CLOCK, ago}, {ICON_CHIP, emu}, {ICON_STACK, cnt}, {ICON_CARD, ver}, {ICON_DOWNLOAD, upd}};
+        {ICON_CLOCK, ago}, {ICON_CHIP, emu}, {ICON_STACK, cnt}, {ICON_CARD, ver}, {ICON_DOWNLOAD, ust ? upd : ""}};
     for (int i = 0; i < 5; i++) {
         if (!chips[i].t[0]) continue;
-        int w = chip(0, 0, chips[i].icon, chips[i].t, 0);
+        Uint32 col = ust == 1 ? UPD_TODO : UPD_DONE;
+        int w = i == 4 ? chip_tint(0, 0, chips[i].icon, chips[i].t, 0, col) : chip(0, 0, chips[i].icon, chips[i].t, 0);
         if (cx + w > x + 900) {
             cx = x;
             cyy += 58;
         }
-        chip(cx, cyy, chips[i].icon, chips[i].t, 1);
+        if (i == 4) chip_tint(cx, cyy, chips[i].icon, chips[i].t, 1, col);
+        else chip(cx, cyy, chips[i].icon, chips[i].t, 1);
         cx += w + 12;
     }
     y = cyy + 52;
+    if (ust == 1) {
+        /* what to do about it, in so many words */
+        char how[200];
+        snprintf(how, sizeof(how), "Install %s in %s once, then mark it installed in File info",
+                 g->nupd && g->ndlc ? "them" : "it", s->emu >= 0 ? g_emus[s->emu].name : "your emulator");
+        draw_text(&F_small, x + 4, y - 6, how, UPD_TODO, a);
+        draw_button((int)(x + 4 + text_width(&F_small, how) + 30), (int)(y - 6 + F_small.line / 2.0f), 's');
+        y += 44;
+    }
 
     if (g_dx.have_info && (g_dx.overview[0] || g_dx.year[0] || g_dx.genre[0])) {
         /* what the game is: year, genre, who made it, players, and its story */
@@ -4491,8 +4605,14 @@ static void draw_modal(void) {
         ly += F_body.line + 4;
         if (ly > y + h - 110) break;
     }
-    draw_button(x + pad + 17, y + h - pad - 4, 'o');
-    draw_text(&F_small, x + pad + 46, y + h - pad - 4 - F_small.line / 2.0f, "Close", 0xcfd5e6, 255);
+    int bx = x + pad;
+    if (g_modal_action[0]) {
+        draw_button(bx + 17, y + h - pad - 4, 'x');
+        draw_text(&F_small, bx + 46, y + h - pad - 4 - F_small.line / 2.0f, g_modal_action, 0xcfd5e6, 255);
+        bx += 46 + (int)text_width(&F_small, g_modal_action) + 40;
+    }
+    draw_button(bx + 17, y + h - pad - 4, 'o');
+    draw_text(&F_small, bx + 46, y + h - pad - 4 - F_small.line / 2.0f, "Close", 0xcfd5e6, 255);
 }
 
 static void draw_launching(const char *title) {
@@ -5172,6 +5292,7 @@ static void create_system_folders(void) {
         scan_everything();
         load_recent();
         load_favs();
+        load_installed();
         rebuild_tabs();
         int now = 0;
         for (int i = 0; i < g_nsys; i++) {
@@ -5209,6 +5330,7 @@ static void settings_activate(void) {
         scan_everything();
         load_recent();
         load_favs();
+        load_installed();
         rebuild_tabs();
         int total = 0;
         for (int s = 0; s < g_nsys; s++) total += g_sys[s].ngames;
@@ -5349,16 +5471,38 @@ static void show_info(Game *g) {
     char cover[1200];
     int cst = cover_of(g, cover, sizeof(cover));
     const char *cv = cst == 1 ? cover : cst == 0 ? (g_art_running ? "downloading" : "not downloaded yet") : "none found";
+    /* updates and DLC: which files, and whether you've installed them in the emulator */
+    char ust[160], extra[1400] = "";
+    int st = upd_state(g, ust, sizeof(ust));
+    if (st) {
+        size_t n = (size_t)snprintf(extra, sizeof(extra), "\nUpdates and DLC: %s\n", ust);
+        for (const char *p = g->grouped; *p && n < sizeof(extra);) {
+            const char *e = strchr(p, '\n');
+            int l = e ? (int)(e - p) : (int)strlen(p);
+            n += (size_t)snprintf(extra + n, sizeof(extra) - n, "  %.*s\n", l, p);
+            p += l + (e ? 1 : 0);
+        }
+        if (n < sizeof(extra))
+            snprintf(extra + n, sizeof(extra) - n, "%s",
+                     st == 1 ? "Jewel Case only sees these files. The emulator needs them installed once\n"
+                               "(from its own menu); after that you can delete them here to save space.\n"
+                             : "Marked installed in the emulator. You can delete the files here to save space.\n");
+    }
     LaunchCmd lc;
     if (build_launch(g, &lc) < 0) {
-        open_modal(g->title, "System: %s\nFile: %s\nCover: %s\n\nNo emulator found for this system.", s->name, g->path, cv);
-        return;
+        open_modal(g->title, "System: %s\nFile: %s\nCover: %s\n%s\nNo emulator found for this system.", s->name, g->path,
+                   cv, extra);
+    } else {
+        Emu *e = &g_emus[s->emu];
+        open_modal(g->title, "System: %s\nFile: %s\nCover: %s\n%s\nEmulator: %s%s%s%s\n%s:\n  %s\nWorking folder:\n  %s",
+                   s->name, g->path, cv, extra,
+                   e->name, s->core_name[0] ? " (core: " : "", s->core_name, s->core_name[0] ? ")" : "",
+                   e->is_title ? "Installed app" : "Command", lc.pretty, lc.cwd);
     }
-    Emu *e = &g_emus[s->emu];
-    open_modal(g->title, "System: %s\nFile: %s\nCover: %s\n\nEmulator: %s%s%s%s\n%s:\n  %s\nWorking folder:\n  %s",
-               s->name, g->path, cv,
-               e->name, s->core_name[0] ? " (core: " : "", s->core_name, s->core_name[0] ? ")" : "",
-               e->is_title ? "Installed app" : "Command", lc.pretty, lc.cwd);
+    if (st) {
+        g_modal_game = g;
+        scopy(g_modal_action, sizeof(g_modal_action), inst_marked(g) ? "Mark not installed" : "Mark installed");
+    }
 }
 
 static void present(SDL_Window *win);
@@ -5449,7 +5593,14 @@ static void select_game(int i) {
 
 static void handle(int in, SDL_Window *win) {
     if (g_modal) {
-        if (in == IN_BACK || in == IN_OK) g_modal = 0;
+        if (in == IN_OK && g_modal_game) {
+            Game *g = g_modal_game;
+            inst_toggle(g);
+            flash(inst_marked(g) ? "Marked installed: %s" : "Marked not installed: %s", g->title);
+            show_info(g);   /* the same window, updated */
+        } else if (in == IN_BACK || in == IN_OK) {
+            g_modal = 0;
+        }
         return;
     }
     if (g_settings) {
@@ -5801,6 +5952,7 @@ int main(int argc, char **argv) {
     scan_everything();
     load_recent();
     load_favs();
+        load_installed();
     build_entries();
     g_sel_entry = 0;   /* Recently Played when there is one */
     if (g_config_err[0]) open_modal("Settings file problem", "%s\n\nJewel Case is using its defaults.", g_config_err);
