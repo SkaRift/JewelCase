@@ -30,7 +30,9 @@
   [libretro thumbnail collection](https://github.com/libretro-thumbnails) and are matched by
   file name, ignoring region tags and punctuation. Your own art always takes priority.
 - **Labels, not boxes.** Cartridge labels show the box art without the box's system banner
-  and ratings. Discs are printed edge to edge with the art and the game's title logo, and
+  and ratings. Discs are printed edge to edge with the art and the game's title logo, inside a silver
+  rim around a clear hub, with the system's band on PS1, PS2 and GameCube discs (GameCube
+  discs are the smaller 8 cm size), and
   GameCube and Wii games get a scan of their real disc from [GameTDB](https://www.gametdb.com),
   found by the game ID in the disc image.
 - **Standalone emulators first.** Jewel Case starts each game in a dedicated PS5 emulator

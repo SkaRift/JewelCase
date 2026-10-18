@@ -65,7 +65,8 @@ file, or in a "covers" folder there. Your own art is always used instead of
 a download.
 
 Cartridge labels show the box art without the box's system banner and
-ratings. Discs show the art edge to edge with the game's title logo (also
+ratings. Discs show the art edge to edge, with a silver rim, a clear hub and, on
+PS1, PS2 and GameCube discs, the system's band. Each has the game's title logo (also
 from libretro-thumbnails, in /data/jewelcase/covers/<system>/logos).
 GameCube and Wii discs use a scan of the real disc from GameTDB
 (art.gametdb.com) when there is one, found by the game ID inside the disc

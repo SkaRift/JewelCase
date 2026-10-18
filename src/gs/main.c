@@ -2135,6 +2135,27 @@ static int has_disc_scans(const System *s) {
     return !strcmp(s->id, "gc") || !strcmp(s->id, "wii");
 }
 
+/* The black band some systems print across the bottom of their discs, with
+ * the system's name on it (plain lettering, not the console makers' logos).
+ * top: where the band starts, as a fraction of the disc's height. */
+typedef struct {
+    const char *id;
+    float top;
+    const char *line1, *line2;   /* line2: a second, bold line under it */
+} DiscBand;
+
+static const DiscBand DISC_BANDS[] = {
+    {"psx", 0.80f, "PlayStation", NULL},
+    {"ps2", 0.80f, "PlayStation 2", NULL},
+    {"gc", 0.63f, "N I N T E N D O", "GAMECUBE"},
+};
+
+static const DiscBand *disc_band_of(const System *s) {
+    for (size_t i = 0; i < sizeof(DISC_BANDS) / sizeof(*DISC_BANDS); i++)
+        if (!strcmp(DISC_BANDS[i].id, s->id)) return &DISC_BANDS[i];
+    return NULL;
+}
+
 /* a system colour bright enough to fill a tab with white text on it */
 static Uint32 accent_of(Uint32 c) {
     float r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
@@ -2155,6 +2176,7 @@ static int g_bokeh_w, g_bokeh_h;
 static Uint32 g_bg_accent = 0xffffffff;
 static SDL_Texture *T_tpl_base[MEDIA_TPL_COUNT], *T_tpl_over[MEDIA_TPL_COUNT];
 static Font F_tiny, F_head, F_chip;
+static Font F_disc_l, F_disc_m, F_disc_s, F_disc_b;   /* system names on disc bands */
 
 static SDL_Texture *texture_from_png(const unsigned char *png, unsigned len, int *ow, int *oh) {
     int w, h, n;
@@ -2700,22 +2722,6 @@ static Uint32 art_px_a(SDL_Surface *art, int x, int y) {
     return ((Uint32 *)((Uint8 *)art->pixels + y * art->pitch))[x];
 }
 
-/* bilinear sample of a small surface, u/v in 0..1 */
-static void art_bilinear(SDL_Surface *s, float u, float v, float *rgb) {
-    float fx = u * s->w - 0.5f, fy = v * s->h - 0.5f;
-    int x0 = (int)SDL_floorf(fx), y0 = (int)SDL_floorf(fy);
-    float ax = fx - x0, ay = fy - y0;
-    rgb[0] = rgb[1] = rgb[2] = 0;
-    for (int k = 0; k < 4; k++) {
-        int xx = SDL_clamp(x0 + (k & 1), 0, s->w - 1), yy = SDL_clamp(y0 + (k >> 1), 0, s->h - 1);
-        float wgt = ((k & 1) ? ax : 1 - ax) * ((k >> 1) ? ay : 1 - ay);
-        Uint32 p = ((Uint32 *)((Uint8 *)s->pixels + yy * s->pitch))[xx];
-        rgb[0] += ((p >> 16) & 255) * wgt;
-        rgb[1] += ((p >> 8) & 255) * wgt;
-        rgb[2] += (p & 255) * wgt;
-    }
-}
-
 /* Where a disc's title goes: the band above the hole, as real discs print it.
  * In disc-label coordinates (0..2 r_out). */
 static SDL_Rect disc_title_band(int r_in, int r_out) {
@@ -2726,40 +2732,24 @@ static SDL_Rect disc_title_band(int r_in, int r_out) {
 
 /* The disc label, masked to the ring r_in..r_out.
  *  scan: a disc scan (GameTDB), drawn as it is.
- *  art:  box art filling the whole disc, softened toward the rim; with a logo,
- *        the logo across the band above the hole on a soft shadow; title = 1
- *        darkens that band for the title text drawn on it afterwards.
- *  none: a shade of the system colour. */
+ *  art:  box art printed edge to edge (above the system band, if the system has
+ *        one); with a logo, the logo across the band above the hole on a soft
+ *        shadow; title = 1 shades that band for title text drawn on it afterwards.
+ *  none: a shade of the system colour.
+ *  band_top: where the system's black band starts (fraction of the disc), 1 = none. */
 static SDL_Texture *disc_label(SDL_Surface *art, SDL_Surface *logo, int scan, int title, Uint32 fill, int r_in,
-                               int r_out) {
+                               int r_out, float band_top) {
     int d = r_out * 2;
     SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, d, d, 32, SDL_PIXELFORMAT_ARGB8888);
     if (!s) return NULL;
-    /* box art: cover the whole disc, and a tiny copy of it for the soft rim */
+    /* box art: cover the disc down to the band */
+    int band_y = band_top < 1 ? (int)(band_top * d) : d + 1;
     float sc = 1, offx = 0, offy = 0;
-    SDL_Surface *tiny = NULL;
     if (art && !scan) {
-        sc = SDL_max((float)d / art->w, (float)d / art->h);
+        int ah = SDL_min(d, band_y);
+        sc = SDL_max((float)d / art->w, (float)ah / art->h);
         offx = (d - art->w * sc) / 2;
-        offy = (d - art->h * sc) / 2;
-        tiny = SDL_CreateRGBSurfaceWithFormat(0, 20, 20, 32, SDL_PIXELFORMAT_ARGB8888);
-        if (tiny) {
-            for (int y = 0; y < 20; y++)
-                for (int x = 0; x < 20; x++) {
-                    unsigned long acc[3] = {0, 0, 0}, n = 0;
-                    for (int yy = 0; yy < 4; yy++)
-                        for (int xx = 0; xx < 4; xx++) {
-                            float px = (x * 4 + xx + 0.5f) / 80 * d, py = (y * 4 + yy + 0.5f) / 80 * d;
-                            Uint32 b = art_px(art, (px - offx) / (art->w * sc), (py - offy) / (art->h * sc));
-                            acc[0] += (b >> 16) & 255;
-                            acc[1] += (b >> 8) & 255;
-                            acc[2] += b & 255;
-                            n++;
-                        }
-                    ((Uint32 *)((Uint8 *)tiny->pixels + y * tiny->pitch))[x] =
-                        0xff000000u | ((Uint32)(acc[0] / n) << 16) | ((Uint32)(acc[1] / n) << 8) | (Uint32)(acc[2] / n);
-                }
-        }
+        offy = (ah - art->h * sc) * 0.4f;
     }
     /* the logo's place in the title band */
     SDL_Rect band = disc_title_band(r_in, r_out);
@@ -2791,15 +2781,7 @@ static SDL_Texture *disc_label(SDL_Surface *art, SDL_Surface *logo, int scan, in
                 c[0] = (b >> 16) & 255;
                 c[1] = (b >> 8) & 255;
                 c[2] = b & 255;
-                /* toward the rim: the soft copy, a little darker */
-                float t = SDL_clamp((r / r_out - 0.80f) / 0.19f, 0.0f, 1.0f);
-                t = t * t * (3 - 2 * t);
-                if (tiny && t > 0) {
-                    float sb[3];
-                    art_bilinear(tiny, (x + 0.5f) / d, (y + 0.5f) / d, sb);
-                    for (int i = 0; i < 3; i++) c[i] = c[i] * (1 - t * 0.85f) + sb[i] * t * 0.85f;
-                }
-                float k = 1 - 0.22f * t;
+                float k = 1;
                 /* the title band: a soft shade behind the logo or title */
                 if (logo || title) {
                     float ex = (x - bcx) / brx, ey = (y - bcy) / bry;
@@ -2826,11 +2808,17 @@ static SDL_Texture *disc_label(SDL_Surface *art, SDL_Surface *logo, int scan, in
                 c[1] = ((fill >> 8) & 255) * k;
                 c[2] = (fill & 255) * k;
             }
+            if (!scan && y >= band_y) {
+                /* the system band: black, a hint of sheen at its top edge */
+                float e = SDL_max(0.0f, 1.0f - (y - band_y) / 3.0f);
+                c[0] = 14 + 40 * e;
+                c[1] = 14 + 40 * e;
+                c[2] = 17 + 42 * e;
+            }
             row[x] = ((Uint32)(a * 255) << 24) | ((Uint32)SDL_clamp(c[0], 0, 255) << 16) |
                      ((Uint32)SDL_clamp(c[1], 0, 255) << 8) | (Uint32)SDL_clamp(c[2], 0, 255);
         }
     }
-    if (tiny) SDL_FreeSurface(tiny);
     SDL_Texture *t = SDL_CreateTextureFromSurface(R, s);
     if (t) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
     SDL_FreeSurface(s);
@@ -2963,13 +2951,31 @@ static void build_media(Game *g) {
         }
     } else {
         int title = 0;   /* without a logo the box's own title is on the disc already */
-        SDL_Texture *lab = scan ? disc_label(scan, NULL, 1, 0, col, t->lx, t->ly)
-                                : disc_label(art, logo, 0, title, col, t->lx, t->ly);
+        const DiscBand *band = scan ? NULL : disc_band_of(s);
+        float btop = band ? band->top : 1.0f;
+        SDL_Texture *lab = scan ? disc_label(scan, NULL, 1, 0, col, t->lx, t->ly, 1.0f)
+                                : disc_label(art, logo, 0, title, col, t->lx, t->ly, btop);
         int c = t->w / 2;
         if (lab) {
             SDL_Rect d = {c - t->ly, c - t->ly, t->ly * 2, t->ly * 2};
             SDL_RenderCopy(R, lab, NULL, &d);
             SDL_DestroyTexture(lab);
+        }
+        if (band) {
+            /* the system's name on its band, as wide as the disc allows there */
+            float by = c - t->ly + btop * t->ly * 2, bh = c + t->ly - by;
+            if (!band->line2) {
+                float ty = by + bh * 0.40f;
+                float half = SDL_sqrtf(SDL_max(0.0f, (float)t->ly * t->ly - (ty - c) * (ty - c))) * 0.86f;
+                Font *f = text_width(&F_disc_l, band->line1) < half * 2 ? &F_disc_l : &F_disc_m;
+                draw_text(f, c - text_width(f, band->line1) / 2, ty - f->line / 2.0f, band->line1, 0xf2f2f4, 245);
+            } else {
+                float y1 = by + bh * 0.22f, y2 = by + bh * 0.48f;
+                draw_text(&F_disc_s, c - text_width(&F_disc_s, band->line1) / 2, y1 - F_disc_s.line / 2.0f,
+                          band->line1, 0xd8d9de, 240);
+                draw_text(&F_disc_b, c - text_width(&F_disc_b, band->line2) / 2, y2 - F_disc_b.line / 2.0f,
+                          band->line2, 0xe4e5ea, 245);
+            }
         }
         if (!art && !scan) {
             title_on_label(g->title, c - t->ly + 40, c - t->ly + 30, t->ly * 2 - 80, t->ly - t->lx - 20);
@@ -4729,6 +4735,10 @@ int main(int argc, char **argv) {
     font_init(&F_head, font_bold, 62);
     font_init(&F_chip, font_regular, 24);
     font_init(&F_tiny, font_regular, 19);
+    font_init(&F_disc_l, font_regular, 34);
+    font_init(&F_disc_m, font_regular, 28);
+    font_init(&F_disc_s, font_regular, 17);
+    font_init(&F_disc_b, font_bold, 34);
 
     /* splash while scanning: the Jewel Case art, with a status line under it */
     {
