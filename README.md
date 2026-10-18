@@ -28,21 +28,17 @@
   its cover printed on it, in a carousel with reflections on a glossy floor.
 - **Automatic box art.** Covers download from the
   [libretro thumbnail collection](https://github.com/libretro-thumbnails) and are matched by
-  file name, ignoring region tags and punctuation. Systems that collection lacks (like Switch)
-  get the box front from the [LaunchBox Games Database](https://gamesdb.launchbox-app.com).
-  Your own art always takes priority.
+  file name, ignoring region tags and punctuation. Your own art always takes priority.
+  (That collection has no Switch covers; add your own art for those for now.)
 - **Labels, not boxes.** Cartridge labels show the box art without the box's system banner
   and ratings. Discs are printed edge to edge with the art and the game's title logo, inside a silver
   rim around a clear hub, with the system's band on PS1, PS2 and GameCube discs (GameCube
-  discs are the smaller 8 cm size). When there's a scan of the real disc, that's used
-  instead: from the [LaunchBox Games Database](https://gamesdb.launchbox-app.com) for every
-  disc system, and from [GameTDB](https://www.gametdb.com) for GameCube and Wii, found by the
-  game ID in the disc image.
+  discs are the smaller 8 cm size). GameCube and Wii discs use a scan of the real disc from
+  [GameTDB](https://www.gametdb.com) when there is one, found by the game ID in the disc image.
 - **Standalone emulators first.** Jewel Case starts each game in a dedicated PS5 emulator
   app when you have one installed, and falls back to RetroArch with a matching core.
-- **Details screen** for each game: its year, genre, developer, players and description from
-  the LaunchBox Games Database, its title screen and an in-game screenshot fading behind it
-  (from libretro-thumbnails), its emulator and when you last played it. Square shows the
+- **Details screen** for each game: its title screen and an in-game screenshot fading behind it
+  (from libretro-thumbnails), its emulator, version and when you last played it. Square shows the
   file, region and size.
 - **Updates and DLC** sit with their game instead of showing as extra games. The game's
   version comes from its file name, and an amber or green chip shows whether its update and DLC
@@ -192,8 +188,7 @@ and the [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk), with SDL2, cJ
 dr_mp3 and the Poppins font. The cartridges, cards and discs are rendered from CC BY 4.0 models by
 Steven-Bennis, HippoStance, Karolina D, Vxcl, Pcwer, crocoman2019 and enjoyboy, and the N64
 cartridge from a CC BY-NC 4.0 model by ejpman ([credits](assets/media/CREDITS.md)). Box art and logos come from
-[libretro-thumbnails](https://github.com/libretro-thumbnails), game info, more box art and disc scans from the
-[LaunchBox Games Database](https://gamesdb.launchbox-app.com) and
+[libretro-thumbnails](https://github.com/libretro-thumbnails), disc scans from
 [GameTDB](https://www.gametdb.com). Thanks to the etaHEN and
 ShadowMountPlus developers and to the authors of every emulator listed above. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

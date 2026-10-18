@@ -3,10 +3,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 PACBREW_PACKAGES ?= sdl2
+# LaunchBox is turned off for now: `make LAUNCHBOX=1` builds it in (JC_LAUNCHBOX) and ships the data
+LAUNCHBOX ?= 0
 APP_INCLUDE_PATHS ?= include
 # launchbox/: the LaunchBox game data shipped in the app (tools/launchbox_pack.py), when it has been made
-APP_ASSETS ?= $(if $(wildcard launchbox/VERSION),launchbox,)
-APP_DEFINITIONS ?= GS_NATIVE NDEBUG
+APP_ASSETS ?= $(if $(filter 1,$(LAUNCHBOX)),$(if $(wildcard launchbox/VERSION),launchbox,),)
+APP_DEFINITIONS ?= GS_NATIVE NDEBUG JC_LAUNCHBOX=$(if $(filter 1,$(LAUNCHBOX)),1,0)
 APP_ROOT_FILES ?= helper/jc-launch.elf helper/jc-scan.elf helper/jc-art.elf $(wildcard assets-music/music.mp3)
 # assets-music/music.mp3: the rain played when /data/jewelcase/music is empty (tools/make_rain.py)
 APP_LAPY_HELPER ?= 0

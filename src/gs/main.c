@@ -2562,7 +2562,22 @@ static int has_gametdb(const System *s) {
 }
 
 /* each system's platform name in the LaunchBox Games Database (game info, and disc scans) */
+/* LaunchBox (game info, disc scans, box art for systems libretro lacks): turned off for now.
+ * Everything for it stays in place (this table, jc-lbdb.c, tools/launchbox_pack.py): build with
+ * -DJC_LAUNCHBOX=1 and `make LAUNCHBOX=1` (which ships the launchbox/ data) to bring it back. */
+#ifndef JC_LAUNCHBOX
+#define JC_LAUNCHBOX 0
+#endif
+#if JC_LAUNCHBOX
+#define LB_CREDIT "  Game info, box art and disc scans: the LaunchBox Games Database; disc scans: GameTDB\n\n"
+#define LB_COVERS "  disc scans from the LaunchBox Games Database and GameTDB\n\n"
+#else
+#define LB_CREDIT "  Disc scans: GameTDB\n\n"
+#define LB_COVERS "  GameCube and Wii disc scans from GameTDB\n\n"
+#endif
+
 static const char *launchbox_platform(const System *s) {
+    if (!JC_LAUNCHBOX) return NULL;
     static const char *const map[][2] = {
         {"nes", "Nintendo Entertainment System"}, {"snes", "Super Nintendo Entertainment System"},
         {"n64", "Nintendo 64"},            {"gb", "Nintendo Game Boy"},       {"gbc", "Nintendo Game Boy Color"},
@@ -2971,6 +2986,7 @@ static int copy_plain(const char *from, const char *to) {
 }
 
 static void stage_launchbox(void) {
+    if (!JC_LAUNCHBOX) return;
     char p[700], q[700], rp[1024];
     snprintf(p, sizeof(p), "%s/assets/VERSION", g_appdir);
     char *have = read_file(p, NULL);
@@ -5564,7 +5580,7 @@ static void settings_activate(void) {
                    "  N64: ejpman (CC BY-NC 4.0, Printables)   Disc: enjoyboy (CD Jewel Case, Blend Swap)\n\n"
                    "Art, downloaded on your console:\n"
                    "  Box art, logos and screenshots: the libretro-thumbnails project\n"
-                   "  Game info, box art and disc scans: the LaunchBox Games Database; disc scans: GameTDB\n\n"
+                   LB_CREDIT
                    "Code: ps5-native-app-boilerplate (BlackBearReloaded), the PS5 payload SDK and\n"
                    "  ps5-payload-websrv (John Tornblom), SDL2, cJSON, stb, dr_mp3, miniz, Poppins font.\n"
                    "Thanks to the etaHEN and ShadowMountPlus developers and every emulator's authors.\n\n"
@@ -5584,7 +5600,7 @@ static void settings_activate(void) {
         open_modal("Jewel Case " GS_VERSION,
                    "Made by SkaRift\n\n%d games on %d systems.\n\nFolder list: %s\nCovers: %s\n  saved in " COVER_DIR "\n"
                    "  box art from the libretro thumbnail collection (github.com/libretro-thumbnails),\n"
-                   "  disc scans from the LaunchBox Games Database and GameTDB\n\n"
+                   LB_COVERS
                    "Your own art, named like the game, next to its file or in a covers folder there, "
                    "is used instead of a download.%s%s",
                    total, nsys, fl, g_art_status, g_config_err[0] ? "\n\n" : "", g_config_err);

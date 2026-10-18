@@ -25,11 +25,10 @@ This builds the three helpers, then compiles, links and signs the app into
 (from `docs/release-readme.txt`) and `LICENSE.txt` inside it. Raise `contentVersion` in
 `sce_sys/param.json` and `GS_VERSION` in `src/gs/main.c` before each release.
 
-Before a release, refresh the LaunchBox game data the app ships with: download
-[Metadata.zip](https://gamesdb.launchbox-app.com/Metadata.zip) and run
-`python3 tools/launchbox_pack.py Metadata.zip`. It writes `launchbox/` (one small file per
-system, not committed), which the build puts in the app's `assets/` folder. Without it the app
-still builds; consoles just get no game info, LaunchBox box art or disc scans.
+LaunchBox support (game info, disc scans, box art for systems libretro lacks) is turned off
+for now. To build it in: download [Metadata.zip](https://gamesdb.launchbox-app.com/Metadata.zip),
+run `python3 tools/launchbox_pack.py Metadata.zip` (it writes `launchbox/`, not committed), then
+`make LAUNCHBOX=1`, which compiles it in and puts the data in the app's `assets/` folder.
 
 Build settings (include paths, defines, SDL2, which helper files go into the app folder) are
 in `jewelcase.mk`. A local `.env` (see `.env.example`) can override any of them, and also
