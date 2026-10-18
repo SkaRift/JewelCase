@@ -4659,6 +4659,7 @@ static void remove_file(const char *path) {
 /* all = also the covers already downloaded; otherwise only the ones not found before */
 static int reset_covers(int all) {
     int n = 0;
+    remove_file(COVER_DIR "/launchbox.fail");   /* try the LaunchBox database again now */
     char done_repo[48][128];
     int nrepo = 0;
     for (int s = 0; s < g_nsys; s++) {

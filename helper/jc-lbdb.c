@@ -550,10 +550,17 @@ static int lb_build(const char want[][48], int nwant) {
   logl("launchbox: downloading the database for %d platform(s)", ix->nplat);
   status("running 0 0 %ld", (long)time(NULL));
   int st = http_get(lb_url("JC_LB_URL", LB_URL), zip_sink, b);
+  if(!b->target_done && !b->net_bytes) {
+    /* nothing came over HTTPS: the same file over plain HTTP */
+    logl("launchbox: https gave %d with no data, trying http", st);
+    st = http_get(lb_url("JC_LB_URL", "http://gamesdb.launchbox-app.com/Metadata.zip"), zip_sink, b);
+  }
   fclose(b->info);
   logl("launchbox: %d, %llu MB downloaded, %llu MB of XML, %d games, %d disc images, error %d", st,
        b->net_bytes >> 20, b->xml_bytes >> 20, b->ngames, b->images, b->error);
   int ok = b->target_done && b->ngames > 0;
+  unsigned long long b_net = b->net_bytes >> 20, b_xml = b->xml_bytes >> 20;
+  int b_games = b->ngames, b_err = b->error;
   if(ok) {
     if(!b->sorted) qsort(b->games, b->ngames, sizeof(LbGame), game_cmp);
     /* the index: from the info file, with each game's line offset and disc */
@@ -596,9 +603,11 @@ static int lb_build(const char want[][48], int nwant) {
   free(b->discs);
   free(b);
   if(!ok) {
+    /* when, and why: shown in the log of the runs that wait for the next try */
     FILE *f = fopen(LB_FAIL, "w");
     if(f) {
-      fprintf(f, "%ld\n", (long)time(NULL));
+      fprintf(f, "%ld HTTP status %d, %llu MB downloaded, %llu MB of XML read, %d games, zip error %d\n",
+              (long)time(NULL), st, b_net, b_xml, b_games, b_err);
       fclose(f);
     }
     return -1;
@@ -625,10 +634,13 @@ static int lb_ready(const char want[][48], int nwant) {
   FILE *f = fopen(LB_FAIL, "r");
   if(f) {
     long t = 0;
+    char why[300] = "";
     if(fscanf(f, "%ld", &t) != 1) t = 0;
+    if(fgets(why, sizeof why, f)) why[strcspn(why, "\r\n")] = 0;
     fclose(f);
-    if(time(NULL) - t < 6 * 3600) {
-      logl("launchbox: last download failed, not trying again yet");
+    if(time(NULL) - t < 3600) {
+      logl("launchbox: the last download failed (%s), trying again in %ld minutes, or now with Redownload all covers",
+           why[0] ? why + 1 : "no reason saved", (3600 - (time(NULL) - t)) / 60 + 1);
       return -1;
     }
   }

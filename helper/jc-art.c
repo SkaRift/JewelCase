@@ -130,6 +130,8 @@ int sceHttp2DeleteRequest(int);
 int sceHttp2SendRequest(int, const void*, size_t);
 int sceHttp2GetStatusCode(int, int*);
 int sceHttp2ReadData(int, void*, size_t);
+int sceHttp2SetAutoRedirect(int, int);
+int sceHttp2SetRecvTimeOut(int, uint32_t);
 
 static int g_pool = -1, g_ssl = -1, g_http = -1, g_tmpl = -1;
 
@@ -139,6 +141,10 @@ static int http_init(void) {
   if((g_ssl = sceSslInit(256 * 1024)) < 0) return -2;
   if((g_http = sceHttp2Init(g_pool, g_ssl, 256 * 1024, 1)) < 0) return -3;
   if((g_tmpl = sceHttp2CreateTemplate(g_http, AGENT, 3, 1)) < 0) return -4;
+  /* follow redirects (download servers hand files to a CDN), and give a long
+   * download time to breathe while it's being unpacked */
+  sceHttp2SetAutoRedirect(g_tmpl, 1);
+  sceHttp2SetRecvTimeOut(g_tmpl, 60 * 1000000u);
   return 0;
 }
 
@@ -755,6 +761,8 @@ static int pending(const char *out) {
 
 int main(void) {
   mkdirs(COVER_DIR);
+  /* keep the last run's log too (as log.old.txt), so a failure isn't lost on the next start */
+  rename(LOG_PATH, COVER_DIR "/log.old.txt");
   g_log = fopen(LOG_PATH, "w");
   logl("jc-art start (pid %d)", (int)getpid());
 
