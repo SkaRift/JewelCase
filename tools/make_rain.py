@@ -120,7 +120,10 @@ def make(seconds, seed, rain, drops, wind):
 
     # gentle, then even out: quiet enough to sit under the menu
     out = np.tanh(out * 1.4) / np.tanh(1.4)
-    out *= 10 ** (-36 / 20) / (np.sqrt((out ** 2).mean()) + 1e-9)   # about -36 dBFS: light background
+    # about -24 dBFS: clearly heard at the app's default 40% volume. The loudest drops are
+    # rounded off by a soft limiter so they stay under full scale without clicking.
+    out *= 10 ** (-24 / 20) / (np.sqrt((out ** 2).mean()) + 1e-9)
+    out = 0.85 * np.tanh(out / 0.85)
     peak = np.abs(out).max()
     if peak > 0.89:
         out *= 0.89 / peak
