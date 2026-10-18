@@ -3770,6 +3770,8 @@ typedef struct {
     char name[160], year[8], genre[160], dev[160], pub[160], players[16];
     char overview[1700];
     SDL_Texture *shot[2];
+    SDL_Texture *comp[2];   /* each shot made into the whole backdrop once: background, shot, shade, floor */
+    Uint32 comp_accent;
     int nshots;
     int state;          /* which of the three files exist, to notice new ones */
     Uint32 checked;
@@ -3795,8 +3797,10 @@ static int det_state(Game *g) {
 }
 
 static void det_free(void) {
-    for (int i = 0; i < 2; i++)
+    for (int i = 0; i < 2; i++) {
         if (g_dx.shot[i]) SDL_DestroyTexture(g_dx.shot[i]);
+        if (g_dx.comp[i]) SDL_DestroyTexture(g_dx.comp[i]);
+    }
     memset(&g_dx, 0, sizeof(g_dx));
 }
 
@@ -3862,29 +3866,34 @@ static void draw_det_backdrop(Game *g, Uint8 a) {
         g_dx.checked = SDL_GetTicks();
         if (det_state(g) != g_dx.state) det_load(g);
     }
-    if (!g_dx.nshots) return;
-    const Uint32 HOLD = 6000, FADE = 1200;
-    Uint32 now = SDL_GetTicks();
-    int cur = (int)((now / HOLD) % (Uint32)g_dx.nshots), nxt = (cur + 1) % g_dx.nshots;
-    Uint32 in = now % HOLD;
-    float f = g_dx.nshots > 1 && in > HOLD - FADE ? (float)(in - (HOLD - FADE)) / FADE : 0;
-    for (int k = 0; k < 2; k++) {
-        int i = k ? nxt : cur;
-        float al = k ? f : 1;
-        if (al <= 0 || !g_dx.shot[i]) continue;
+    if (!g_dx.nshots || !T_bg) return;
+    /* the backdrops, put together once (drawing a scaled, blended screenshot and
+     * the floor every frame was far too slow) */
+    if (g_dx.comp_accent != g_bg_accent)
+        for (int i = 0; i < 2; i++)
+            if (g_dx.comp[i]) {
+                SDL_DestroyTexture(g_dx.comp[i]);
+                g_dx.comp[i] = NULL;
+            }
+    g_dx.comp_accent = g_bg_accent;
+    for (int i = 0; i < g_dx.nshots; i++) {
+        if (g_dx.comp[i] || !g_dx.shot[i]) continue;
+        SDL_Texture *c = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, SCREEN_W, SCREEN_H);
+        if (!c) return;
+        SDL_Texture *prev = SDL_GetRenderTarget(R);
+        SDL_SetRenderTarget(R, c);
+        SDL_RenderCopy(R, T_bg, NULL, NULL);
         int w, h;
         SDL_QueryTexture(g_dx.shot[i], NULL, NULL, &w, &h);
         float sc = SDL_max((float)SCREEN_W / w, (float)SCREEN_H / h);
         SDL_Rect d = {(int)(SCREEN_W - w * sc) / 2, (int)(SCREEN_H - h * sc) / 2, (int)(w * sc), (int)(h * sc)};
         SDL_SetTextureColorMod(g_dx.shot[i], 120, 120, 132);
-        SDL_SetTextureAlphaMod(g_dx.shot[i], (Uint8)(a * 0.42f * al));
+        SDL_SetTextureAlphaMod(g_dx.shot[i], 107);
         SDL_RenderCopy(R, g_dx.shot[i], NULL, &d);
-    }
-    /* darker on the left, where the text is */
-    for (int x = 0; x < 1100; x += 20)
-        fill_rect(x, 0, 20, SCREEN_H, 0x06070c, (Uint8)(a * 0.55f * (1.0f - x / 1100.0f)));
-    /* the floor back on top, column by column along its curved far edge */
-    if (T_bg)
+        /* darker on the left, where the text is */
+        for (int x = 0; x < 1100; x += 20)
+            fill_rect(x, 0, 20, SCREEN_H, 0x06070c, (Uint8)(140 * (1.0f - x / 1100.0f)));
+        /* the floor back on top, column by column along its curved far edge */
         for (int x = 0; x < SCREEN_W; x += 8) {
             float top, bot;
             if (!floor_span(x + 4.0f, &top, &bot)) continue;
@@ -3892,6 +3901,25 @@ static void draw_det_backdrop(Game *g, Uint8 a) {
             SDL_Rect r = {x, y0, 8, SCREEN_H - y0};
             SDL_RenderCopy(R, T_bg, &r, &r);
         }
+        SDL_SetRenderTarget(R, prev);
+        SDL_SetTextureBlendMode(c, SDL_BLENDMODE_BLEND);
+        g_dx.comp[i] = c;
+    }
+    const Uint32 HOLD = 6000, FADE = 1200;
+    Uint32 now = SDL_GetTicks();
+    int cur = (int)((now / HOLD) % (Uint32)g_dx.nshots), nxt = (cur + 1) % g_dx.nshots;
+    Uint32 in = now % HOLD;
+    float f = g_dx.nshots > 1 && in > HOLD - FADE ? (float)(in - (HOLD - FADE)) / FADE : 0;
+    if (g_dx.comp[cur]) {
+        SDL_SetTextureAlphaMod(g_dx.comp[cur], a);
+        SDL_SetTextureBlendMode(g_dx.comp[cur], a == 255 ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
+        SDL_RenderCopy(R, g_dx.comp[cur], NULL, NULL);
+    }
+    if (f > 0 && g_dx.comp[nxt]) {
+        SDL_SetTextureBlendMode(g_dx.comp[nxt], SDL_BLENDMODE_BLEND);
+        SDL_SetTextureAlphaMod(g_dx.comp[nxt], (Uint8)(a * f));
+        SDL_RenderCopy(R, g_dx.comp[nxt], NULL, NULL);
+    }
 }
 
 static void draw_details_media(Game *g, Uint32 accent, float t) {
