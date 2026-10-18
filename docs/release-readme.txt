@@ -9,9 +9,10 @@ discs with their cover art, which it downloads for you.
 
 WHAT YOU NEED
 -------------
-- A jailbroken PS5 running etaHEN (tested on firmware 13.42).
-  Jewel Case sends small helper programs to etaHEN's ELF loader
-  (port 9021), so etaHEN must be running.
+- A jailbroken PS5 with an ELF loader listening on port 9021.
+  etaHEN has one built in; a standalone ELF loader works too. Jewel
+  Case sends small helper programs to it, so it must be running.
+  (Tested on firmware 13.42 with etaHEN.)
 - ShadowMountPlus (or another way to install a homebrew app folder).
 - At least one emulator. Standalone emulator apps are used first, and
   RetroArch (PPSA99169) is used for any system that doesn't have one.
@@ -131,7 +132,8 @@ Emulators (what was found), Credits, About.
 
 TROUBLESHOOTING
 ---------------
-- "ELF loader isn't answering": start etaHEN, then open Jewel Case again.
+- "ELF loader isn't answering": start etaHEN (or your ELF loader), then
+  open Jewel Case again.
 - A system shows "No emulator found": install one of the emulators above,
   or RetroArch with a matching core. Settings > Emulators shows what was
   found.

@@ -3368,6 +3368,34 @@ static int update_spin(float dt) {
     return changed;
 }
 
+/* Starting a game: the selected one takes off. A disc spins clockwise, faster
+ * and faster; a cartridge turns around its upright axis; both fly up and out. */
+static Game *g_launch_game;
+static float g_launch_t;        /* 0..1 through the animation */
+#define LAUNCH_MS 950
+
+static int draw_launch_anim(Game *g, float cx, float cy, float w, float h, Uint8 bright, Uint8 alpha) {
+    if (g != g_launch_game || !g->media) return 0;
+    float t = g_launch_t;
+    float f = SDL_max(0.0f, (t - 0.28f) / 0.72f);
+    float lift = f * f * (cy + h * 0.7f + 60);       /* up and off the top of the screen */
+    const MediaTpl *mt = &MEDIA_TPL[tpl_of(&g_sys[g->sys])];
+    if (mt->kind == 1) {
+        float ang = 1260.0f * t * t;                  /* winding up, clockwise */
+        SDL_Rect d = {(int)(cx - w / 2), (int)(cy - h / 2 - lift), (int)w, (int)h};
+        SDL_SetTextureColorMod(g->media, bright, bright, bright);
+        SDL_SetTextureAlphaMod(g->media, alpha);
+        SDL_RenderCopyEx(R, g->media, NULL, &d, ang, NULL, SDL_FLIP_NONE);
+        SDL_SetTextureColorMod(g->media, 255, 255, 255);
+        SDL_SetTextureAlphaMod(g->media, 255);
+    } else {
+        float ang = 480.0f * SDL_powf(t, 1.6f);        /* turning, more slowly */
+        draw_spun(g, cx, cy - lift, w, h, ang, cy + h / 2 + 3 + lift * 2, g->refl_h * h / g->media_h,
+                  bright, (Uint8)(alpha * (1 - f * 0.3f)));
+    }
+    return 1;
+}
+
 /* carousel slot look by distance from the centre (interpolated) */
 static const float SLOT_SCALE[] = {1.0f, 0.80f, 0.66f, 0.56f, 0.48f, 0.42f, 0.38f};
 static const float SLOT_X[] = {0, 400, 660, 870, 1040, 1175, 1280};
@@ -3483,6 +3511,7 @@ static void draw_carousel(Uint32 accent) {
             rt[j] = yb[j] + 3 + lift;
             rb[j] = rt[j] + rh * hf;
         }
+        if (d < 0.5f && draw_launch_anim(g, x, cy, w, h, bright, alpha)) continue;
         if (g == g_spin_game && g_spin != 0 && d < 0.5f) {
             draw_spun(g, x, cy, w, h, g_spin, cy + h / 2 + 3 + lift, rh, bright, alpha);
             continue;
@@ -3901,6 +3930,7 @@ static void draw_details_media(Game *g, Uint32 accent, float t) {
         rt[j] = yb[j] + 13;
         rb[j] = rt[j] + rh * hf;
     }
+    if (draw_launch_anim(g, cx, cy, w, h, 255, 255)) return;
     if (g == g_spin_game && g_spin != 0) {
         draw_spun(g, cx, cy, w, h, g_spin, cy + h / 2 + 13, rh, 255, 255);
         return;
@@ -5045,6 +5075,19 @@ static void launch_game(Game *g, SDL_Window *win) {
         return;
     }
     save_recent(g->path);
+    /* the take-off, then the launch */
+    g_launch_game = g;
+    Uint32 t0 = SDL_GetTicks();
+    for (;;) {
+        float t = (SDL_GetTicks() - t0) / (float)LAUNCH_MS;
+        if (t >= 1) break;
+        g_launch_t = t;
+        render();
+        present(win);
+        SDL_Delay(8);
+    }
+    g_launch_t = 1;
+    g_launch_game = NULL;
     g_launching = 1;
     render();
     draw_launching(g->title);
@@ -5055,8 +5098,8 @@ static void launch_game(Game *g, SDL_Window *win) {
     g_launching = 0;
     if (st == -2) {
         open_modal("Couldn't start the game",
-                   "Jewel Case hands app launches to etaHEN's ELF loader (port 9021),\n"
-                   "and it isn't answering. Check that etaHEN is running, then try again.");
+                   "Jewel Case hands app launches to the ELF loader on port 9021 (etaHEN's,\n"
+                   "or a standalone one), and it isn't answering. Start it, then try again.");
     } else if (st == -3) {
         open_modal("Couldn't start the game", "jc-launch.elf is missing from the Jewel Case folder.\nReinstall Jewel Case.");
     } else if (st == -4) {
@@ -5067,7 +5110,7 @@ static void launch_game(Game *g, SDL_Window *win) {
         open_modal("Couldn't start the game",
                    "Jewel Case starts games through websrv (the Homebrew Launcher's\n"
                    "web server), and it isn't answering on port 8080.\n\n"
-                   "Load websrv (or check your etaHEN autoload), then try again.");
+                   "Load websrv (or check your payload autoload), then try again.");
     } else if (st != 200 && st != 0) {
         open_modal("Couldn't start the game", "websrv answered with status %d.\n\n%s", st, lc.pretty);
     } else {
@@ -5467,9 +5510,10 @@ int main(int argc, char **argv) {
     if (g_config_err[0]) open_modal("Settings file problem", "%s\n\nJewel Case is using its defaults.", g_config_err);
     if (g_scan_failed && g_nentries == 0)
         open_modal("Couldn't list your game folders",
-                   "Jewel Case lists folders with a small helper it sends to etaHEN's\n"
-                   "ELF loader (port 9021), because apps can't list folders themselves.\n\n"
-                   "Check that etaHEN is running, then restart Jewel Case.\n"
+                   "Jewel Case lists folders with a small helper it sends to the ELF loader\n"
+                   "on port 9021 (etaHEN's, or a standalone one), because apps can't list\n"
+                   "folders themselves.\n\n"
+                   "Start the ELF loader, then restart Jewel Case.\n"
                    "  Details: %s", g_scan_status);
 
     for (int i = 0; i < SDL_NumJoysticks(); i++)
@@ -5505,6 +5549,11 @@ int main(int argc, char **argv) {
             else if (!strcmp(tok, "emus")) in = IN_SETTINGS;
             else if (!strcmp(tok, "fav")) in = IN_FAV;
             else if (!strncmp(tok, "pos:", 4)) { g_pos = (float)atof(tok + 4); continue; }
+            else if (!strncmp(tok, "takeoff:", 8)) {   /* the launch animation at a point, for screenshots */
+                g_launch_game = entry_game(g_sel_game);
+                g_launch_t = (float)atof(tok + 8);
+                continue;
+            }
             else if (!strncmp(tok, "spin:", 5)) {
                 g_spin_game = entry_game(g_sel_game);
                 g_spin = (float)atof(tok + 5);

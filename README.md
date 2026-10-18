@@ -48,8 +48,9 @@
 
 ## Requirements
 
-- A jailbroken PS5 running **etaHEN**. Jewel Case sends small helper payloads to its ELF
-  loader on port 9021. Tested on firmware 13.42.
+- A jailbroken PS5 with an **ELF loader** listening on port 9021. etaHEN has one built in;
+  a standalone ELF loader works too. Jewel Case sends small helper payloads to it. Tested on
+  firmware 13.42 with etaHEN.
 - **ShadowMountPlus**, or another way to install a homebrew app folder.
 - One or more emulators:
 
