@@ -48,3 +48,6 @@ recent.json
 favorites.json
 ui-settings.json
 .deps
+
+# LaunchBox game data, made by tools/launchbox_pack.py for release builds
+/launchbox/

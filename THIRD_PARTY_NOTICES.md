@@ -100,7 +100,7 @@ Hinnant's public-domain `civil_from_days` algorithm.
 (commit `293d4db1b7d0ffee9756d035b9ac6f7431ef8492`), MIT, unmodified, with its
 `LICENSE`; `SOURCE.json` records each file's SHA-256. Jewel Case's cover
 helper (`helper/jc-lbdb.c`, in `jc-art.elf`) uses its inflate code to unpack the
-LaunchBox database, so Jewel Case ships miniz and carries its notice here. The
+LaunchBox game data shipped in the app, so Jewel Case ships miniz and carries its notice here. The
 self-update helper (`examples/self-update-helper`) and its host test also link it. The
 helper's archive validation and file helpers are original BlackBearReloaded
 code (GPL-3.0-or-later), taken from the ProsperoStore project.
@@ -168,6 +168,12 @@ See assets/media/CREDITS.md.
 ## Downloaded art
 
 Jewel Case includes no game art. On the console it downloads box art and title logos from
-the libretro-thumbnails project (https://github.com/libretro-thumbnails), game info and disc scans
-from the LaunchBox Games Database (https://gamesdb.launchbox-app.com) and GameCube / Wii disc scans
-from GameTDB (https://www.gametdb.com). That art belongs to its owners.
+the libretro-thumbnails project (https://github.com/libretro-thumbnails), box art, disc scans
+and game info from the LaunchBox Games Database (https://gamesdb.launchbox-app.com) and
+GameCube / Wii disc scans from GameTDB (https://www.gametdb.com). That art belongs to its owners.
+
+Release builds include a reduced copy of the LaunchBox Games Database's game list (names,
+year, genres, developer, publisher, players, a shortened description, and the file names of
+each game's box front and disc scan), made from LaunchBox's public Metadata.zip by
+`tools/launchbox_pack.py`, so consoles don't download the whole database. That data comes
+from LaunchBox and its contributors (https://gamesdb.launchbox-app.com).

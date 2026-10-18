@@ -7,7 +7,7 @@
  *
  * Request file:
  *   jewelcase-art 1
- *   G<TAB>repo<TAB>output path without extension<TAB>ROM file name without extension
+ *   G<TAB>repo<TAB>output path without extension<TAB>ROM file name without extension[<TAB>LaunchBox platform]
  *   L<TAB>repo<TAB>output path without extension<TAB>ROM file name without extension
  *   T<TAB>-<TAB>output path without extension<TAB>disc image path
  *   D<TAB>LaunchBox platform<TAB>output path without extension<TAB>ROM name[<TAB>disc image path]
@@ -17,6 +17,8 @@
  * disc scan from GameTDB (art.gametdb.com) for GameCube and Wii games, found by
  * the game ID in the disc image's header. D a disc scan from the LaunchBox
  * Games Database (jc-lbdb.c), then from GameTDB when a disc image path is given.
+ * G falls back to LaunchBox's box front when the libretro collection has none
+ * (or, like Switch, there is no collection) and a LaunchBox platform is given.
  * I the game's info from the LaunchBox database (<output>.txt). S an in-game
  * screenshot (Named_Snaps), W its title screen (Named_Titles).
  *
@@ -746,18 +748,8 @@ typedef struct {
   char repo[128];       /* D: the LaunchBox platform */
   char out[900];
   char rom[600];
-  char disc[600];       /* D: the disc image, for GameTDB after LaunchBox */
+  char disc[600];       /* D: the disc image, for GameTDB after LaunchBox; G: the LaunchBox platform */
 } Job;
-
-static int pending(const char *out) {
-  char p[1000];
-  static const char *ext[] = {"png", "jpg", "none", "txt"};
-  for(int i = 0; i < 4; i++) {
-    snprintf(p, sizeof p, "%s.%s", out, ext[i]);
-    if(exists(p)) return 0;
-  }
-  return 1;
-}
 
 int main(void) {
   mkdirs(COVER_DIR);
@@ -836,19 +828,6 @@ int main(void) {
     return 1;
   }
 
-  /* LaunchBox: its index first, if any disc still needs looking for */
-  char want[LB_MAXPLAT][48];
-  int nwant = 0, need_lb = 0;
-  for(int i = 0; i < n; i++) {
-    if((jobs[i].type != 'D' && jobs[i].type != 'I') || !pending(jobs[i].out)) continue;
-    need_lb = 1;
-    int seen = 0;
-    for(int k = 0; k < nwant; k++) if(plat_eq(want[k], jobs[i].repo)) seen = 1;
-    if(!seen && nwant < LB_MAXPLAT) snprintf(want[nwant++], sizeof want[0], "%s", jobs[i].repo);
-  }
-  /* the database is fetched when the first job needing it comes up, so covers come first */
-  int lb_asked = 0;
-
   int found = 0, tried = 0;
   for(int i = 0; i < n; i++) {
     status("running %d %d %ld", i, n, (long)time(NULL));
@@ -864,10 +843,6 @@ int main(void) {
     parent_dirs(p);
     tried++;
     int r;
-    if((jobs[i].type == 'D' || jobs[i].type == 'I') && need_lb && !lb_asked) {
-      lb_asked = 1;
-      if(lb_ready(want, nwant) != 0) logl("launchbox: no index, so no game info, and discs fall back to GameTDB / the printed design");
-    }
     if(jobs[i].type == 'T') {
       r = find_disc_scan(jobs[i].rom, jobs[i].out);
     } else if(jobs[i].type == 'I') {
@@ -875,13 +850,20 @@ int main(void) {
     } else if(jobs[i].type == 'S' || jobs[i].type == 'W') {
       r = find_cover(jobs[i].repo, jobs[i].type == 'S' ? "Named_Snaps" : "Named_Titles", jobs[i].rom, jobs[i].out);
     } else if(jobs[i].type == 'D') {
-      r = find_lb_disc(jobs[i].repo, jobs[i].rom, jobs[i].out);
+      r = find_lb_image(jobs[i].repo, jobs[i].rom, jobs[i].out, 'D');
       if(r != 0 && jobs[i].disc[0]) {
         int r2 = find_disc_scan(jobs[i].disc, jobs[i].out);
         r = r2 == 0 ? 0 : (r == -2 || r2 == -2) ? -2 : -1;
       }
     }
-    else r = find_cover(jobs[i].repo, jobs[i].type == 'L' ? "Named_Logos" : "Named_Boxarts", jobs[i].rom, jobs[i].out);
+    else {
+      r = find_cover(jobs[i].repo, jobs[i].type == 'L' ? "Named_Logos" : "Named_Boxarts", jobs[i].rom, jobs[i].out);
+      if(r != 0 && jobs[i].type == 'G' && jobs[i].disc[0]) {
+        int r2 = find_lb_image(jobs[i].disc, jobs[i].rom, jobs[i].out, 'B');
+        if(r2 == -2 && g_lb.missing) r2 = -1;   /* no LaunchBox data for it: not worth asking again */
+        r = r2 == 0 ? 0 : (r == -2 || r2 == -2) ? -2 : -1;
+      }
+    }
     if(r == 0) {
       if(jobs[i].type == 'G') found++;
     } else if(r != -2) {

@@ -2526,7 +2526,7 @@ static void poll_art_status(void) {
         g_art_running = 1;
         g_art_done = a;
         g_art_total = b;
-        if (b == 0) scopy(g_art_status, sizeof(g_art_status), "downloading the LaunchBox disc database");
+        if (b == 0) scopy(g_art_status, sizeof(g_art_status), "starting");
         else snprintf(g_art_status, sizeof(g_art_status), "downloading, %d of %d checked", a, b);
     } else {
         g_art_running = 0;
@@ -2539,6 +2539,88 @@ static void poll_art_status(void) {
     free(txt);
 }
 
+
+/* The LaunchBox data shipped in the app (assets/<slug>.lbz, from
+ * tools/launchbox_pack.py), copied to COVER_DIR/lb for jc-art.elf, which can't
+ * see the app's folder: only the systems with games, and again when the app
+ * has a newer database. */
+static void lb_slug(const char *p, char *out, size_t cap) {
+    size_t o = 0;
+    for (; *p && o + 1 < cap; p++)
+        if ((unsigned char)*p < 0x80 && isalnum((unsigned char)*p)) out[o++] = (char)tolower((unsigned char)*p);
+    out[o] = 0;
+}
+
+static void remove_file(const char *path);
+
+/* a real file on /data (not through the ROM folder index) */
+static int is_plain_file(const char *path) {
+    char rp[1024];
+    struct stat st;
+    real_path(path, rp, sizeof(rp));
+    return stat(rp, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static int copy_plain(const char *from, const char *to) {
+    char rf[1024], rt[1024], part[1100];
+    real_path(from, rf, sizeof(rf));
+    real_path(to, rt, sizeof(rt));
+    snprintf(part, sizeof(part), "%s.part", rt);
+    FILE *in = fopen(rf, "rb");
+    if (!in) return -1;
+    FILE *out = fopen(part, "wb");
+    if (!out) {
+        fclose(in);
+        return -1;
+    }
+    static char buf[65536];
+    size_t n;
+    int ok = 1;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0)
+        if (fwrite(buf, 1, n, out) != n) ok = 0;
+    fclose(in);
+    if (fclose(out) != 0) ok = 0;
+    if (!ok || rename(part, rt) != 0) {
+        remove(part);
+        return -1;
+    }
+    return 0;
+}
+
+static void stage_launchbox(void) {
+    char p[700], q[700], rp[1024];
+    snprintf(p, sizeof(p), "%s/assets/VERSION", g_appdir);
+    char *have = read_file(p, NULL);
+    if (!have) return;   /* a build without the data */
+    real_path(COVER_DIR, rp, sizeof(rp));
+    mkdir(rp, 0777);
+    real_path(COVER_DIR "/lb", rp, sizeof(rp));
+    mkdir(rp, 0777);
+    char *was = read_file(COVER_DIR "/lb/VERSION", NULL);
+    int fresh = !was || strcmp(was, have);
+    if (fresh) {
+        /* 1.1 and earlier downloaded the whole database instead */
+        remove_file(COVER_DIR "/launchbox.idx");
+        remove_file(COVER_DIR "/launchbox-info.txt");
+        remove_file(COVER_DIR "/launchbox.fail");
+    }
+    int copied = 0;
+    for (int s = 0; s < g_nsys; s++) {
+        const char *lbp = launchbox_platform(&g_sys[s]);
+        if (!lbp || !g_sys[s].ngames) continue;
+        char slug[64];
+        lb_slug(lbp, slug, sizeof(slug));
+        snprintf(q, sizeof(q), COVER_DIR "/lb/%s.lbz", slug);
+        if (!fresh && is_plain_file(q)) continue;
+        snprintf(p, sizeof(p), "%s/assets/%s.lbz", g_appdir, slug);
+        if (copy_plain(p, q) == 0) copied++;
+        else logf_("launchbox: no %s in the app", p);
+    }
+    if (fresh) write_file(COVER_DIR "/lb/VERSION", have);
+    if (copied) logf_("launchbox: %d system(s) of database %s copied", copied, have);
+    free(have);
+    free(was);
+}
 
 /* Ask jc-art.elf for every game that has no art of its own. */
 static void start_cover_helper(void) {
@@ -2561,7 +2643,8 @@ static void start_cover_helper(void) {
                 int n = 0;
                 if (pass == 0 && !g->art[0]) {
                     cover_base(g, base, sizeof(base));
-                    n += snprintf(line + n, sizeof(line) - n, "G\t%s\t%s\t%s\n", l->repo, base, g->stem);
+                    n += snprintf(line + n, sizeof(line) - n, "G\t%s\t%s\t%s%s%s\n", l->repo, base, g->stem,
+                                  lbp ? "\t" : "", lbp ? lbp : "");
                 } else if (pass == 1 && wants_extras(g)) {
                     extra_base(g, 0, base, sizeof(base));
                     n += snprintf(line + n, sizeof(line) - n, "L\t%s\t%s\t%s\n", l->repo, base, g->stem);
@@ -2589,6 +2672,7 @@ static void start_cover_helper(void) {
             }
         }
     if (!count) return;
+    stage_launchbox();
     if (write_file("/data/jewelcase-art.txt", req) != 0) {
         scopy(g_art_status, sizeof(g_art_status), "couldn't write /data/jewelcase-art.txt");
         return;
@@ -4659,7 +4743,6 @@ static void remove_file(const char *path) {
 /* all = also the covers already downloaded; otherwise only the ones not found before */
 static int reset_covers(int all) {
     int n = 0;
-    remove_file(COVER_DIR "/launchbox.fail");   /* try the LaunchBox database again now */
     char done_repo[48][128];
     int nrepo = 0;
     for (int s = 0; s < g_nsys; s++) {
@@ -4711,12 +4794,6 @@ static int reset_covers(int all) {
                 remove_file(p);
                 snprintf(p, sizeof(p), COVER_DIR "/%s.Named_Logos.idx", l->repo);
                 remove_file(p);
-                if (nrepo == 0) {
-                    /* the LaunchBox disc index too */
-                    remove_file(COVER_DIR "/launchbox.idx");
-                    remove_file(COVER_DIR "/launchbox-info.txt");
-                    remove_file(COVER_DIR "/launchbox.fail");
-                }
                 scopy(done_repo[nrepo++], 128, l->repo);
             }
         }

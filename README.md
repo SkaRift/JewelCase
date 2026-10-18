@@ -28,7 +28,9 @@
   its cover printed on it, in a carousel with reflections on a glossy floor.
 - **Automatic box art.** Covers download from the
   [libretro thumbnail collection](https://github.com/libretro-thumbnails) and are matched by
-  file name, ignoring region tags and punctuation. Your own art always takes priority.
+  file name, ignoring region tags and punctuation. Systems that collection lacks (like Switch)
+  get the box front from the [LaunchBox Games Database](https://gamesdb.launchbox-app.com).
+  Your own art always takes priority.
 - **Labels, not boxes.** Cartridge labels show the box art without the box's system banner
   and ratings. Discs are printed edge to edge with the art and the game's title logo, inside a silver
   rim around a clear hub, with the system's band on PS1, PS2 and GameCube discs (GameCube
@@ -135,7 +137,7 @@ and the [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk), with SDL2, cJ
 dr_mp3 and the Poppins font. The cartridges, cards and discs are rendered from CC BY 4.0 models by
 Steven-Bennis, HippoStance, Karolina D, Vxcl, Pcwer, crocoman2019 and enjoyboy, and the N64
 cartridge from a CC BY-NC 4.0 model by ejpman ([credits](assets/media/CREDITS.md)). Box art and logos come from
-[libretro-thumbnails](https://github.com/libretro-thumbnails), disc scans from the
+[libretro-thumbnails](https://github.com/libretro-thumbnails), game info, more box art and disc scans from the
 [LaunchBox Games Database](https://gamesdb.launchbox-app.com) and
 [GameTDB](https://www.gametdb.com). Thanks to the etaHEN and
 ShadowMountPlus developers and to the authors of every emulator listed above. See
