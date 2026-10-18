@@ -59,21 +59,20 @@ def add_wrapped(dst, start, sig):
 
 
 def drop_sound(rng, bright):
-    """one drop on concrete: a short tick, then a little splash"""
-    ln = int(SR * rng.uniform(0.012, 0.05))
+    """one drop on concrete: a soft tap and a little splash, no sharp edges (sharp ones crackle)"""
+    ln = int(SR * rng.uniform(0.02, 0.06))
     t = np.arange(ln) / SR
     noise = rng.standard_normal(ln)
-    # brighter drops ring higher; a first-difference keeps them crisp
-    if bright < 0.5:
-        noise = np.convolve(noise, np.ones(4) / 4, 'same')
-    else:
-        noise = np.diff(noise, prepend=0)
-    env = np.exp(-t / rng.uniform(0.003, 0.012))
+    # always smoothed: darker drops more, brighter ones less, never above ~4 kHz
+    k = 7 if bright >= 0.5 else 12
+    noise = np.convolve(noise, np.hanning(k) / np.hanning(k).sum(), 'same')
+    attack = np.minimum(1, t / rng.uniform(0.0015, 0.003))       # a soft start, not a click
+    env = attack * np.exp(-t / rng.uniform(0.005, 0.016))
     tick = noise * env
-    # a faint resonant "plip" now and then (water on water)
-    if rng.random() < 0.12:
-        fr = rng.uniform(1800, 4200)
-        tick += 0.6 * np.sin(2 * np.pi * fr * t * (1 + 0.6 * t * 30)) * np.exp(-t / 0.008)
+    # a faint, low "plip" now and then (water on water)
+    if rng.random() < 0.08:
+        fr = rng.uniform(900, 1900)
+        tick += 0.35 * np.sin(2 * np.pi * fr * t * (1 + 8 * t)) * attack * np.exp(-t / 0.012)
     return tick
 
 
@@ -84,7 +83,7 @@ def make(seconds, seed, rain, drops, wind):
 
     # the steady hiss of rain: wide, soft, each side its own noise
     for ch in range(2):
-        hiss = periodic_noise(n, rng, band(500, 5200, 0.5))
+        hiss = periodic_noise(n, rng, band(500, 4200, 0.6))
         body = periodic_noise(n, rng, band(450, 1700, 0.6))
         swell = 0.8 + 0.2 * lfo(n, 3, ch * 0.7) * lfo(n, 7, 1.3 + ch)
         out[ch] += rain * (0.30 * hiss + 0.24 * body) * swell
