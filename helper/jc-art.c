@@ -135,31 +135,22 @@ int sceHttp2GetStatusCode(int, int*);
 int sceHttp2ReadData(int, void*, size_t);
 int sceHttp2SetAutoRedirect(int, int);
 int sceHttp2SetRecvTimeOut(int, uint32_t);
-int sceHttp2SslDisableOption(int, uint32_t);
-/* the older HTTP library, tried for HTTPS when HTTP/2 can't connect */
-int sceHttpInit(int, int, size_t);
-int sceHttpTerm(int);
-int sceHttpCreateTemplate(int, const char *, int, int);
-int sceHttpDeleteTemplate(int);
-int sceHttpCreateConnectionWithURL(int, const char *, int);
-int sceHttpDeleteConnection(int);
-int sceHttpCreateRequestWithURL(int, int, const char *, uint64_t);
-int sceHttpDeleteRequest(int);
-int sceHttpSendRequest(int, const void *, size_t);
-int sceHttpGetStatusCode(int, int *);
-int sceHttpReadData(int, void *, size_t);
-int sceHttpSetAutoRedirect(int, int);
-int sceHttpSetRecvTimeOut(int, uint32_t);
-int sceHttpsDisableOption(int, uint32_t);
 
-#define SSL_NO_CHECKS (0x01 | 0x04 | 0x08 | 0x10 | 0x20)   /* server cert, name, dates, known CA */
+/* HTTPS through curl and OpenSSL (from PacBrew): the console's own SSL refuses a payload
+ * (every HTTPS request failed with 0x8095f00c, from both of its HTTP libraries), so the
+ * encryption is done here, over a plain socket, and servers are checked against Mozilla's
+ * root certificates built in (cacert.h). Plain HTTP stays on the console's library. */
+#include <curl/curl.h>
+#include "cacert.h"
+
+/* zstd (pulled in by curl) asks for these optional tracing hooks; defined here so the
+ * console's loader has nothing left unresolved */
+unsigned long long ZSTD_trace_decompress_begin(const void *dctx) { (void)dctx; return 0; }
+void ZSTD_trace_decompress_end(unsigned long long ctx, const void *trace) { (void)ctx; (void)trace; }
 
 static int g_pool = -1, g_ssl = -1, g_http = -1, g_tmpl = -1;
-static int g_tmpl_nv = -1;                  /* HTTP/2 without the certificate checks */
-static int g_http1 = -1, g_tmpl1 = -1, g_tmpl1_nv = -1;   /* the older library, with and without */
-/* how HTTPS goes on this console, found by https_probe(): -1 not at all (only plain HTTP is
- * used), 0 HTTP/2, 1 HTTP/2 without certificate checks, 2 HTTP/1.1, 3 HTTP/1.1 without */
-static int g_https = 0;
+static CURL *g_curl;
+static int g_curl_errors;
 
 static int http_init(void) {
   sceNetInit();
@@ -171,16 +162,14 @@ static int http_init(void) {
    * download time to breathe while it's being unpacked */
   sceHttp2SetAutoRedirect(g_tmpl, 1);
   sceHttp2SetRecvTimeOut(g_tmpl, 60 * 1000000u);
+  if(curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK) g_curl = curl_easy_init();
+  logl("https: curl %s%s", curl_version(), g_curl ? "" : " (couldn't start: plain HTTP only)");
   return 0;
 }
 
 static void http_fini(void) {
-  /* (a probe stuck inside the network library may still hold these: leave them then) */
-  if(g_https == -2) return;
-  if(g_tmpl1_nv >= 0) sceHttpDeleteTemplate(g_tmpl1_nv);
-  if(g_tmpl1 >= 0) sceHttpDeleteTemplate(g_tmpl1);
-  if(g_http1 >= 0) sceHttpTerm(g_http1);
-  if(g_tmpl_nv >= 0) sceHttp2DeleteTemplate(g_tmpl_nv);
+  if(g_curl) curl_easy_cleanup(g_curl);
+  curl_global_cleanup();
   if(g_tmpl >= 0) sceHttp2DeleteTemplate(g_tmpl);
   if(g_http >= 0) sceHttp2Term(g_http);
   if(g_ssl >= 0) sceSslTerm(g_ssl);
@@ -189,23 +178,16 @@ static void http_fini(void) {
 
 static char g_chunk[CHUNK];
 
-static int g_http_errors;   /* failures logged in full, so the log shows why without filling up */
-
-static int get2(int tmpl, const char *url, sink_fn sink, void *ctx) {
-  int req = sceHttp2CreateRequestWithURL(tmpl, "GET", url, 0);
-  if(req < 0) {
-    if(g_http_errors++ < 12) logl("http: create request for %s: 0x%08x", url, (unsigned)req);
-    return -1;
-  }
+/* plain HTTP: the console's HTTP/2 library */
+static int get_plain(const char *url, sink_fn sink, void *ctx) {
+  int req = sceHttp2CreateRequestWithURL(g_tmpl, "GET", url, 0);
+  if(req < 0) return -1;
   int status = -1;
-  int sr = sceHttp2SendRequest(req, NULL, 0);
-  int gr = sr ? 0 : sceHttp2GetStatusCode(req, &status);
-  if(sr || gr) {
-    if(g_http_errors++ < 12) logl("http: %s: send 0x%08x, status 0x%08x", url, (unsigned)sr, (unsigned)gr);
+  if(sceHttp2SendRequest(req, NULL, 0) || sceHttp2GetStatusCode(req, &status)) {
     sceHttp2DeleteRequest(req);
     return -1;
   }
-  if(status == 200 && sink) {
+  if(status == 200) {
     int n;
     while((n = sceHttp2ReadData(req, g_chunk, sizeof g_chunk)) > 0) {
       if(sink(ctx, g_chunk, (size_t)n)) {
@@ -219,175 +201,56 @@ static int get2(int tmpl, const char *url, sink_fn sink, void *ctx) {
   return status;
 }
 
-static int get1(int tmpl, const char *url, sink_fn sink, void *ctx) {
-  int conn = sceHttpCreateConnectionWithURL(tmpl, url, 0);
-  if(conn < 0) {
-    if(g_http_errors++ < 12) logl("http1: connection for %s: 0x%08x", url, (unsigned)conn);
+typedef struct {
+  sink_fn sink;
+  void *ctx;
+  int stopped;
+} CurlSink;
+
+static size_t curl_write(char *data, size_t size, size_t n, void *user) {
+  CurlSink *cs = user;
+  long code = 0;
+  curl_easy_getinfo(g_curl, CURLINFO_RESPONSE_CODE, &code);
+  if(code != 200) return size * n;   /* only a 200's body goes to the sink */
+  if(cs->sink(cs->ctx, data, size * n)) {
+    cs->stopped = 1;
+    return 0;                        /* stops the transfer */
+  }
+  return size * n;
+}
+
+static int get_https(const char *url, sink_fn sink, void *ctx) {
+  if(!g_curl) return -1;
+  CurlSink cs = {sink, ctx, 0};
+  struct curl_blob ca = {(void *)CACERT_PEM, sizeof CACERT_PEM - 1, CURL_BLOB_NOCOPY};
+  curl_easy_reset(g_curl);
+  curl_easy_setopt(g_curl, CURLOPT_URL, url);
+  curl_easy_setopt(g_curl, CURLOPT_USERAGENT, AGENT);
+  curl_easy_setopt(g_curl, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(g_curl, CURLOPT_MAXREDIRS, 5L);
+  curl_easy_setopt(g_curl, CURLOPT_CONNECTTIMEOUT, 20L);
+  curl_easy_setopt(g_curl, CURLOPT_LOW_SPEED_LIMIT, 1L);     /* give up on a stalled download */
+  curl_easy_setopt(g_curl, CURLOPT_LOW_SPEED_TIME, 60L);
+  curl_easy_setopt(g_curl, CURLOPT_NOSIGNAL, 1L);
+  curl_easy_setopt(g_curl, CURLOPT_CAINFO_BLOB, &ca);
+  curl_easy_setopt(g_curl, CURLOPT_WRITEFUNCTION, curl_write);
+  curl_easy_setopt(g_curl, CURLOPT_WRITEDATA, &cs);
+  CURLcode rc = curl_easy_perform(g_curl);
+  long code = 0;
+  curl_easy_getinfo(g_curl, CURLINFO_RESPONSE_CODE, &code);
+  if(cs.stopped) return -2;
+  if(rc != CURLE_OK) {
+    if(g_curl_errors++ < 12) logl("https: %s: %s (%d)", url, curl_easy_strerror(rc), (int)rc);
     return -1;
   }
-  int req = sceHttpCreateRequestWithURL(conn, 0 /* GET */, url, 0);
-  if(req < 0) {
-    if(g_http_errors++ < 12) logl("http1: request for %s: 0x%08x", url, (unsigned)req);
-    sceHttpDeleteConnection(conn);
-    return -1;
-  }
-  int status = -1;
-  int sr = sceHttpSendRequest(req, NULL, 0);
-  int gr = sr ? 0 : sceHttpGetStatusCode(req, &status);
-  if(sr || gr) {
-    if(g_http_errors++ < 12) logl("http1: %s: send 0x%08x, status 0x%08x", url, (unsigned)sr, (unsigned)gr);
-    status = -1;
-  } else if(status == 200 && sink) {
-    int n;
-    while((n = sceHttpReadData(req, g_chunk, sizeof g_chunk)) > 0) {
-      if(sink(ctx, g_chunk, (size_t)n)) {
-        status = -2;
-        break;
-      }
-    }
-    if(n < 0) status = -3;
-  }
-  sceHttpDeleteRequest(req);
-  sceHttpDeleteConnection(conn);
-  return status;
+  return (int)code;
 }
 
 static int http_get(const char *url, sink_fn sink, void *ctx) {
-  if(strncmp(url, "https:", 6)) return get2(g_tmpl, url, sink, ctx);
-  switch(g_https) {
-  case 0: return get2(g_tmpl, url, sink, ctx);
-  case 1: return get2(g_tmpl_nv, url, sink, ctx);
-  case 2: return get1(g_tmpl1, url, sink, ctx);
-  case 3: return get1(g_tmpl1_nv, url, sink, ctx);
-  default: return -1;   /* no HTTPS on this console: callers fall back to plain HTTP */
-  }
+  return strncmp(url, "https:", 6) ? get_plain(url, sink, ctx) : get_https(url, sink, ctx);
 }
 
-/* Which way HTTPS works here, found once and remembered in COVER_DIR/https.txt. Each way is
- * tried on a small request, after writing down that it's being tried: a call into the network
- * library has crashed the helper before, and then the next run sees the note, marks that way
- * as bad and never tries it again. Order: HTTP/2, HTTP/1.1, HTTP/1.1 without certificate
- * checks, HTTP/2 without (the one that crashed). A time limit covers a hang. */
-#include <pthread.h>
-#define PROBE_URL "https://raw.githubusercontent.com/libretro-thumbnails/libretro-thumbnails/master/README.md"
-#define HTTPS_NOTE COVER_DIR "/https.txt"
-static const int PROBE_ORDER[4] = {0, 2, 3, 1};
-static const char *const WAY_NAME[4] = {"HTTP/2", "HTTP/2 without certificate checks", "HTTP/1.1",
-                                        "HTTP/1.1 without certificate checks"};
-static volatile int g_probe_result, g_probe_done;
-
-static void note(const char *fmt, ...) {
-  FILE *f = fopen(HTTPS_NOTE, "a");
-  if(!f) return;
-  va_list ap;
-  va_start(ap, fmt);
-  vfprintf(f, fmt, ap);
-  va_end(ap);
-  fputc('\n', f);
-  fflush(f);
-  fsync(fileno(f));
-  fclose(f);
-}
-
-static int try_way(int way) {
-  if(way == 0) return get2(g_tmpl, PROBE_URL, NULL, NULL);
-  if(way == 1) {
-    if(g_tmpl_nv < 0 && (g_tmpl_nv = sceHttp2CreateTemplate(g_http, AGENT, 3, 1)) >= 0) {
-      sceHttp2SetAutoRedirect(g_tmpl_nv, 1);
-      sceHttp2SetRecvTimeOut(g_tmpl_nv, 30 * 1000000u);
-      sceHttp2SslDisableOption(g_tmpl_nv, SSL_NO_CHECKS);
-    }
-    return g_tmpl_nv >= 0 ? get2(g_tmpl_nv, PROBE_URL, NULL, NULL) : -1;
-  }
-  if(g_http1 < 0) {
-    g_http1 = sceHttpInit(g_pool, g_ssl, 256 * 1024);
-    logl("https probe: HTTP/1.1 library: 0x%08x", (unsigned)g_http1);
-    if(g_http1 < 0) return -1;
-  }
-  int *t = way == 2 ? &g_tmpl1 : &g_tmpl1_nv;
-  if(*t < 0) {
-    *t = sceHttpCreateTemplate(g_http1, AGENT, 2, 1);
-    logl("https probe: HTTP/1.1 template: 0x%08x", (unsigned)*t);
-    if(*t < 0) return -1;
-    sceHttpSetAutoRedirect(*t, 1);
-    sceHttpSetRecvTimeOut(*t, 30 * 1000000u);
-    if(way == 3) logl("https probe: without checks: 0x%08x", (unsigned)sceHttpsDisableOption(*t, SSL_NO_CHECKS));
-  }
-  return get1(*t, PROBE_URL, NULL, NULL);
-}
-
-static void *probe_thread(void *arg) {
-  int way = *(int *)arg;
-  g_probe_result = try_way(way);
-  g_probe_done = 1;
-  return NULL;
-}
-
-static void https_probe(void) {
-  /* what earlier runs found */
-  int bad[4] = {0}, ok = -1, testing = -1;
-  FILE *f = fopen(HTTPS_NOTE, "r");
-  if(f) {
-    char ln[200];
-    int w;
-    while(fgets(ln, sizeof ln, f)) {
-      if(sscanf(ln, "testing %d", &w) == 1) testing = w;
-      else if(sscanf(ln, "bad %d", &w) == 1 && w >= 0 && w < 4) { bad[w] = 1; testing = -1; }
-      else if(sscanf(ln, "ok %d", &w) == 1 && w >= 0 && w < 4) { ok = w; testing = -1; }
-    }
-    fclose(f);
-  }
-  if(testing >= 0 && testing < 4) {
-    logl("https: the last run stopped while trying %s: never again", WAY_NAME[testing]);
-    note("bad %d crashed", testing);
-    bad[testing] = 1;
-  }
-  if(ok >= 0 && !bad[ok]) {
-    g_https = ok;
-    logl("https: using %s (found earlier)", WAY_NAME[ok]);
-    /* make sure its template exists */
-    if(ok != 0) try_way(ok);
-    return;
-  }
-  g_https = -1;
-  for(int k = 0; k < 4; k++) {
-    int way = PROBE_ORDER[k];
-    if(bad[way]) continue;
-    note("testing %d", way);
-    g_probe_done = 0;
-    static int arg;
-    arg = way;
-    pthread_t th;
-    if(pthread_create(&th, NULL, probe_thread, &arg) != 0) break;
-    pthread_detach(th);
-    for(int i = 0; i < 250 && !g_probe_done; i++) usleep(100000);   /* 25 s */
-    if(!g_probe_done) {
-      logl("https probe: %s: no answer in 25 s", WAY_NAME[way]);
-      note("bad %d hung", way);
-      g_https = -2;   /* the network library may be stuck: no more HTTPS this run */
-      break;
-    }
-    logl("https probe: %s: %d", WAY_NAME[way], g_probe_result);
-    if(g_probe_result > 0) {
-      note("ok %d", way);
-      g_https = way;
-      break;
-    }
-    note("bad %d status %d", way, g_probe_result);
-  }
-  if(g_https < 0) logl("https: no way works on this console: plain HTTP only (fewer covers, no LaunchBox pictures)");
-  else logl("https: using %s", WAY_NAME[g_https]);
-
-  /* does LaunchBox's image server answer plain HTTP itself, or send it to HTTPS? */
-  int nr = sceHttp2CreateTemplate(g_http, AGENT, 3, 1);
-  if(nr >= 0) {
-    sceHttp2SetAutoRedirect(nr, 0);
-    sceHttp2SetRecvTimeOut(nr, 20 * 1000000u);
-    int st = get2(nr, "http://images.launchbox-app.com/", NULL, NULL);
-    logl("launchbox over plain http, not following redirects: %d", st);
-    sceHttp2DeleteTemplate(nr);
-  }
-}
+static void https_probe(void) {}
 #endif
 
 /* ------------------------------------------------------------------------ */

@@ -28,8 +28,11 @@ helper/jc-launch.elf: helper/jc-launch.c
 	$(PAYLOAD_CC) $(PAYLOAD_CFLAGS) -o $@ $< -lSceSystemService -lSceUserService
 helper/jc-scan.elf: helper/jc-scan.c
 	$(PAYLOAD_CC) $(PAYLOAD_CFLAGS) -o $@ $<
-helper/jc-art.elf: helper/jc-art.c helper/jc-lbdb.c
-	$(PAYLOAD_CC) $(PAYLOAD_CFLAGS) -o $@ $< -lSceNet -lSceSsl -lSceHttp2 -lSceHttp
+# jc-art does HTTPS itself with PacBrew's curl and OpenSSL (the console's SSL refuses payloads)
+PACBREW_HOMEBREW = $(firstword $(wildcard $(CURDIR)/.deps/pacbrew/*/sysroot/user/homebrew) $(PS5_PAYLOAD_SDK)/target/user/homebrew)
+helper/jc-art.elf: helper/jc-art.c helper/jc-lbdb.c helper/cacert.h
+	$(PAYLOAD_CC) $(PAYLOAD_CFLAGS) -DCURL_STATICLIB -I$(PACBREW_HOMEBREW)/include -o $@ $< \
+	    -L$(PACBREW_HOMEBREW)/lib -lcurl -lpsl -lssl -lcrypto -lzstd -lz -lpthread -lSceNet -lSceSsl -lSceHttp2
 
 .PHONY: helpers media host
 helpers: helper/jc-launch.elf helper/jc-scan.elf helper/jc-art.elf

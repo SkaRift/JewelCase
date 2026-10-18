@@ -76,10 +76,10 @@ replace the pinned SDK or install files globally. PacBrew recipes and every
 linked third-party library retain their upstream licenses; applications must
 review those terms before redistribution.
 
-The update-check example (`make update-check-example`) selects `libcurl`, which
-statically links these PacBrew libraries into the example title. Its build
-output stays under ignored `dist/` and is not distributed by this repository; an
-application that ships the update check ships them and must carry their notices:
+Jewel Case's cover helper (`helper/jc-art.c`, `jc-art.elf`) statically links these PacBrew
+libraries for its HTTPS downloads (the console's own SSL refuses payloads), so every Jewel Case
+release ships them, and carries their notices here. (The update-check example,
+`make update-check-example`, links the same set.)
 
 | Component | Version in PacBrew v0.40.2 | License |
 | --- | --- | --- |
@@ -93,6 +93,14 @@ application that ships the update check ships them and must carry their notices:
 native title, is original BlackBearReloaded code (GPL-3.0-or-later), taken from
 the ProsperoRadio and ProsperoLichess projects. Its `gmtime_r` follows Howard
 Hinnant's public-domain `civil_from_days` algorithm.
+
+## Root certificates
+
+`third_party/cacert/cacert.pem` is Mozilla's CA certificate list as packaged by
+[certifi](https://github.com/certifi/python-certifi) 2026.07.22, under the
+[Mozilla Public License 2.0](https://mozilla.org/MPL/2.0/), unmodified. `tools/make_cacert.py`
+turns it into `helper/cacert.h`, which the cover helper uses to check the HTTPS servers it
+downloads from.
 
 ## Vendored miniz
 

@@ -1,0 +1,2 @@
+certifi 2026.07.22 (https://github.com/certifi/python-certifi): Mozilla CA certificate list, MPL-2.0.
+https://mozilla.org/MPL/2.0/

@@ -229,6 +229,9 @@ Built with and thanks to:
   Game info, disc scans and more box art: the LaunchBox Games Database
   (gamesdb.launchbox-app.com); a reduced copy of its game list is included
   and GameTDB (gametdb.com)
+  curl (curl license), OpenSSL (Apache 2.0), zstd (BSD), zlib (zlib
+  license), libpsl (MIT), Mozilla's root certificates (MPL 2.0): HTTPS
+  downloads in the cover helper
   miniz (MIT, (c) Rich Geldreich, RAD Game Tools, Valve), to unpack
   the LaunchBox game list
   Cartridge, card and disc renders: 3D models by Steven-Bennis (SNES),
