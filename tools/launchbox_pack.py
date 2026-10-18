@@ -65,11 +65,22 @@ def clean(s):
     return ' '.join((s or '').split())
 
 
+def cut(s, n):
+    """at most n characters, ending on a whole sentence when one ends past the halfway point"""
+    if len(s) <= n:
+        return s
+    head = s[:n]
+    end = max(head.rfind('. '), head.rfind('! '), head.rfind('? '))
+    if end >= n // 2:
+        return head[:end + 1]
+    return head.rsplit(' ', 1)[0] + '…'
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('zip')
-    ap.add_argument('--max-overview', type=int, default=1200,
-                    help='cut overviews to this many characters (the details screen shows about that much)')
+    ap.add_argument('--max-overview', type=int, default=500,
+                    help='cut descriptions to this many characters (the details screen shows six lines, about that much)')
     a = ap.parse_args()
 
     want = {p.lower(): p for p in platforms()}
@@ -97,8 +108,7 @@ def main():
                 if plat and gid:
                     year = (el.findtext('ReleaseYear') or el.findtext('ReleaseDate') or '')[:4]
                     ov = clean(el.findtext('Overview'))
-                    if len(ov) > a.max_overview:
-                        ov = ov[:a.max_overview].rsplit(' ', 1)[0] + '…'
+                    ov = cut(ov, a.max_overview)
                     games[gid] = [plat, clean(el.findtext('Name')), year, clean(el.findtext('Genres')),
                                   clean(el.findtext('Developer')), clean(el.findtext('Publisher')),
                                   clean(el.findtext('MaxPlayers')), ov]
