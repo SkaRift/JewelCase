@@ -263,60 +263,130 @@ static int http_get(const char *url, sink_fn sink, void *ctx) {
   }
 }
 
-/* Which way HTTPS works here: each tried in turn on a small request, on a thread of its own
- * with a time limit (a call into the network library has been seen to hang). */
+/* Which way HTTPS works here, found once and remembered in COVER_DIR/https.txt. Each way is
+ * tried on a small request, after writing down that it's being tried: a call into the network
+ * library has crashed the helper before, and then the next run sees the note, marks that way
+ * as bad and never tries it again. Order: HTTP/2, HTTP/1.1, HTTP/1.1 without certificate
+ * checks, HTTP/2 without (the one that crashed). A time limit covers a hang. */
 #include <pthread.h>
 #define PROBE_URL "https://raw.githubusercontent.com/libretro-thumbnails/libretro-thumbnails/master/README.md"
-static volatile int g_probe_step, g_probe_done, g_probe_ok = -1;
+#define HTTPS_NOTE COVER_DIR "/https.txt"
+static const int PROBE_ORDER[4] = {0, 2, 3, 1};
+static const char *const WAY_NAME[4] = {"HTTP/2", "HTTP/2 without certificate checks", "HTTP/1.1",
+                                        "HTTP/1.1 without certificate checks"};
+static volatile int g_probe_result, g_probe_done;
+
+static void note(const char *fmt, ...) {
+  FILE *f = fopen(HTTPS_NOTE, "a");
+  if(!f) return;
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(f, fmt, ap);
+  va_end(ap);
+  fputc('\n', f);
+  fflush(f);
+  fsync(fileno(f));
+  fclose(f);
+}
+
+static int try_way(int way) {
+  if(way == 0) return get2(g_tmpl, PROBE_URL, NULL, NULL);
+  if(way == 1) {
+    if(g_tmpl_nv < 0 && (g_tmpl_nv = sceHttp2CreateTemplate(g_http, AGENT, 3, 1)) >= 0) {
+      sceHttp2SetAutoRedirect(g_tmpl_nv, 1);
+      sceHttp2SetRecvTimeOut(g_tmpl_nv, 30 * 1000000u);
+      sceHttp2SslDisableOption(g_tmpl_nv, SSL_NO_CHECKS);
+    }
+    return g_tmpl_nv >= 0 ? get2(g_tmpl_nv, PROBE_URL, NULL, NULL) : -1;
+  }
+  if(g_http1 < 0) {
+    g_http1 = sceHttpInit(g_pool, g_ssl, 256 * 1024);
+    logl("https probe: HTTP/1.1 library: 0x%08x", (unsigned)g_http1);
+    if(g_http1 < 0) return -1;
+  }
+  int *t = way == 2 ? &g_tmpl1 : &g_tmpl1_nv;
+  if(*t < 0) {
+    *t = sceHttpCreateTemplate(g_http1, AGENT, 2, 1);
+    logl("https probe: HTTP/1.1 template: 0x%08x", (unsigned)*t);
+    if(*t < 0) return -1;
+    sceHttpSetAutoRedirect(*t, 1);
+    sceHttpSetRecvTimeOut(*t, 30 * 1000000u);
+    if(way == 3) logl("https probe: without checks: 0x%08x", (unsigned)sceHttpsDisableOption(*t, SSL_NO_CHECKS));
+  }
+  return get1(*t, PROBE_URL, NULL, NULL);
+}
 
 static void *probe_thread(void *arg) {
-  (void)arg;
-  for(int way = 0; way < 4 && g_probe_ok < 0; way++) {
-    g_probe_step = way;
-    int st = -1;
-    if(way == 0) {
-      st = get2(g_tmpl, PROBE_URL, NULL, NULL);
-    } else if(way == 1) {
-      if(g_tmpl_nv < 0 && (g_tmpl_nv = sceHttp2CreateTemplate(g_http, AGENT, 3, 1)) >= 0) {
-        sceHttp2SetAutoRedirect(g_tmpl_nv, 1);
-        sceHttp2SetRecvTimeOut(g_tmpl_nv, 30 * 1000000u);
-        logl("https probe: HTTP/2 without checks: option 0x%08x", (unsigned)sceHttp2SslDisableOption(g_tmpl_nv, SSL_NO_CHECKS));
-      }
-      if(g_tmpl_nv >= 0) st = get2(g_tmpl_nv, PROBE_URL, NULL, NULL);
-    } else {
-      if(g_http1 < 0) {
-        g_http1 = sceHttpInit(g_pool, g_ssl, 256 * 1024);
-        logl("https probe: HTTP/1.1 library: 0x%08x", (unsigned)g_http1);
-      }
-      int *t = way == 2 ? &g_tmpl1 : &g_tmpl1_nv;
-      if(g_http1 >= 0 && *t < 0 && (*t = sceHttpCreateTemplate(g_http1, AGENT, 2, 1)) >= 0) {
-        sceHttpSetAutoRedirect(*t, 1);
-        sceHttpSetRecvTimeOut(*t, 30 * 1000000u);
-        if(way == 3) logl("https probe: HTTP/1.1 without checks: option 0x%08x", (unsigned)sceHttpsDisableOption(*t, SSL_NO_CHECKS));
-      }
-      if(*t >= 0) st = get1(*t, PROBE_URL, NULL, NULL);
-    }
-    static const char *const names[] = {"HTTP/2", "HTTP/2 without certificate checks", "HTTP/1.1", "HTTP/1.1 without certificate checks"};
-    logl("https probe: %s: %d", names[way], st);
-    if(st > 0) g_probe_ok = way;
-  }
+  int way = *(int *)arg;
+  g_probe_result = try_way(way);
   g_probe_done = 1;
   return NULL;
 }
 
 static void https_probe(void) {
-  pthread_t th;
-  if(pthread_create(&th, NULL, probe_thread, NULL) != 0) return;
-  pthread_detach(th);
-  for(int i = 0; i < 400 && !g_probe_done; i++) usleep(100000);   /* 40 s at most */
-  if(!g_probe_done) {
-    logl("https probe: stuck (step %d): no HTTPS this run, plain HTTP only", g_probe_step);
-    g_https = -2;
+  /* what earlier runs found */
+  int bad[4] = {0}, ok = -1, testing = -1;
+  FILE *f = fopen(HTTPS_NOTE, "r");
+  if(f) {
+    char ln[200];
+    int w;
+    while(fgets(ln, sizeof ln, f)) {
+      if(sscanf(ln, "testing %d", &w) == 1) testing = w;
+      else if(sscanf(ln, "bad %d", &w) == 1 && w >= 0 && w < 4) { bad[w] = 1; testing = -1; }
+      else if(sscanf(ln, "ok %d", &w) == 1 && w >= 0 && w < 4) { ok = w; testing = -1; }
+    }
+    fclose(f);
+  }
+  if(testing >= 0 && testing < 4) {
+    logl("https: the last run stopped while trying %s: never again", WAY_NAME[testing]);
+    note("bad %d crashed", testing);
+    bad[testing] = 1;
+  }
+  if(ok >= 0 && !bad[ok]) {
+    g_https = ok;
+    logl("https: using %s (found earlier)", WAY_NAME[ok]);
+    /* make sure its template exists */
+    if(ok != 0) try_way(ok);
     return;
   }
-  g_https = g_probe_ok;
+  g_https = -1;
+  for(int k = 0; k < 4; k++) {
+    int way = PROBE_ORDER[k];
+    if(bad[way]) continue;
+    note("testing %d", way);
+    g_probe_done = 0;
+    static int arg;
+    arg = way;
+    pthread_t th;
+    if(pthread_create(&th, NULL, probe_thread, &arg) != 0) break;
+    pthread_detach(th);
+    for(int i = 0; i < 250 && !g_probe_done; i++) usleep(100000);   /* 25 s */
+    if(!g_probe_done) {
+      logl("https probe: %s: no answer in 25 s", WAY_NAME[way]);
+      note("bad %d hung", way);
+      g_https = -2;   /* the network library may be stuck: no more HTTPS this run */
+      break;
+    }
+    logl("https probe: %s: %d", WAY_NAME[way], g_probe_result);
+    if(g_probe_result > 0) {
+      note("ok %d", way);
+      g_https = way;
+      break;
+    }
+    note("bad %d status %d", way, g_probe_result);
+  }
   if(g_https < 0) logl("https: no way works on this console: plain HTTP only (fewer covers, no LaunchBox pictures)");
-  else logl("https: using way %d", g_https);
+  else logl("https: using %s", WAY_NAME[g_https]);
+
+  /* does LaunchBox's image server answer plain HTTP itself, or send it to HTTPS? */
+  int nr = sceHttp2CreateTemplate(g_http, AGENT, 3, 1);
+  if(nr >= 0) {
+    sceHttp2SetAutoRedirect(nr, 0);
+    sceHttp2SetRecvTimeOut(nr, 20 * 1000000u);
+    int st = get2(nr, "http://images.launchbox-app.com/", NULL, NULL);
+    logl("launchbox over plain http, not following redirects: %d", st);
+    sceHttp2DeleteTemplate(nr);
+  }
 }
 #endif
 
