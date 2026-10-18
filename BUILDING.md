@@ -42,8 +42,9 @@ sets `PS5_HOST` for `make deploy`.
 ## Generated sources
 
 - `src/gs/media.h` holds the cartridge, card and disc templates, the icons and the background
-  light map, all drawn by `tools/make_media.py`. Run `make media` (needs Pillow and NumPy) to
-  regenerate it.
+  light map, made by `tools/make_media.py`. Run `make media` (needs Pillow and NumPy) to
+  regenerate it. Templates with a folder in `assets/media/` are renders of 3D models (see
+  `tools/render/README.md`); the rest are drawn by the script.
 - `src/gs/splash.h` (the loading screen) and `sce_sys/pic0.dds` / `pic1.dds` (the launch
   splash and home-screen background, 3840×2160 BC7) are made from
   `assets/branding/splash.png`.

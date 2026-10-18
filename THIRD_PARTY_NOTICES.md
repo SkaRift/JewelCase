@@ -142,3 +142,19 @@ Jewel Case (by SkaRift) is built on this boilerplate and adds these components:
 Box art is downloaded at run time from [libretro-thumbnails](https://github.com/libretro-thumbnails)
 and is not part of this repository. The cartridge, card and disc artwork is drawn by
 `tools/make_media.py` and contains no console makers' logos.
+
+## Cartridge and disc models (CC BY 4.0)
+
+The cartridge, card and disc images are renders of 3D models licensed under the Creative
+Commons Attribution 4.0 license (https://creativecommons.org/licenses/by/4.0/), changed for
+Jewel Case (rendered front-on, labels blanked, logos removed, some recoloured):
+
+- "SNES Cartridge" by Steven-Bennis — https://sketchfab.com/3d-models/snes-cartridge-1caba5630eb0435187d6e975d4eed6c5
+- "NES Cartridge" by HippoStance — https://sketchfab.com/3d-models/nes-cartridge-e3c8de99be1740ae8fa551aa9b2596d2
+- "Gameboy Cartridge" by Karolina D — https://sketchfab.com/3d-models/gameboy-cartridge-7c0160c8097a43e0a5e146bf4d7e01a1
+- "Gameboy Advance Cartridge" by Vxcl — https://sketchfab.com/3d-models/gameboy-advance-cartridge-38c1e6702e5d4f21af1d0930689b1d10
+- "Nintendo DS Cartridge" by Pcwer — https://sketchfab.com/3d-models/nintendo-ds-cartridge-364e487e31fd4135b6c6941a0ffaba82
+- "Nintendo Switch Cartridge" by crocoman2019 — https://sketchfab.com/3d-models/nintendo-switch-cartridge-94e7c74e664849d490f136cb8acca86a
+- "CD Jewel Case" (the disc) by enjoyboy, Blend Swap
+
+See assets/media/CREDITS.md.

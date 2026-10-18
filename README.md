@@ -121,7 +121,9 @@ Jewel Case by **SkaRift**.
 
 Built on [ps5-native-app-boilerplate](https://github.com/blackbearreloaded/ps5-native-app-boilerplate) (BlackBearReloaded)
 and the [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk), with SDL2, cJSON, stb,
-dr_mp3 and the Poppins font. Box art comes from
+dr_mp3 and the Poppins font. The cartridges, cards and discs are rendered from CC BY 4.0 models by
+Steven-Bennis, HippoStance, Karolina D, Vxcl, Pcwer, crocoman2019 and enjoyboy
+([credits](assets/media/CREDITS.md)). Box art comes from
 [libretro-thumbnails](https://github.com/libretro-thumbnails). Thanks to the etaHEN and
 ShadowMountPlus developers and to the authors of every emulator listed above. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

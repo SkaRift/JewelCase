@@ -138,6 +138,11 @@ Built with and thanks to:
   stb_image_write (public domain), dr_mp3 (public domain / MIT-0),
   Poppins font (SIL Open Font License)
   Box art: the libretro-thumbnails project
+  Cartridge, card and disc renders: 3D models by Steven-Bennis (SNES),
+  HippoStance (NES), Karolina D (Game Boy), Vxcl (GBA), Pcwer (DS),
+  crocoman2019 (Switch) and enjoyboy (disc), CC BY 4.0, changed for
+  Jewel Case (labels blanked, logos removed). Links in
+  THIRD_PARTY_NOTICES.md in the source repository.
   etaHEN, ShadowMountPlus, and the authors of every emulator above.
 
 Jewel Case doesn't include any games, BIOS files or covers. Use your own
