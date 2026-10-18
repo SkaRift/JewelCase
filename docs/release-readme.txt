@@ -46,7 +46,7 @@ Settings > "Games folder" picks the drive for your roms folder (internal
 storage, extended storage or a USB drive; games in a roms folder on any
 drive are found either way), and "Create system folders" makes every
 folder there for you and
-writes "_Jewel Case folder guide.txt" in /data/roms, listing each folder
+writes "_Jewel Case folder guide.txt" in that folder, listing each folder
 and the file types it takes.
 
 Folder names: nes snes n64 gb gbc gba nds 3ds genesis sms gg pce psx psp
