@@ -58,22 +58,31 @@ def add_wrapped(dst, start, sig):
         dst[:end - n] += sig[k:]
 
 
+def lowpass(x, fc):
+    """two passes of a one-pole low-pass: a gentle slope above fc"""
+    a = np.exp(-2 * np.pi * fc / SR)
+    for _ in range(2):
+        y = np.empty_like(x)
+        acc = 0.0
+        for k in range(x.size):
+            acc = (1 - a) * x[k] + a * acc
+            y[k] = acc
+        x = y
+    return x
+
+
 def drop_sound(rng, bright):
-    """one drop on concrete: a soft tap and a little splash, no sharp edges (sharp ones crackle)"""
-    ln = int(SR * rng.uniform(0.02, 0.06))
+    """one drop on concrete: a low, soft tap, rounded so it never crackles"""
+    ln = int(SR * rng.uniform(0.03, 0.07))
     t = np.arange(ln) / SR
-    noise = rng.standard_normal(ln)
-    # always smoothed: darker drops more, brighter ones less, never above ~4 kHz
-    k = 7 if bright >= 0.5 else 12
-    noise = np.convolve(noise, np.hanning(k) / np.hanning(k).sum(), 'same')
-    attack = np.minimum(1, t / rng.uniform(0.0015, 0.003))       # a soft start, not a click
-    env = attack * np.exp(-t / rng.uniform(0.005, 0.016))
-    tick = noise * env
-    # a faint, low "plip" now and then (water on water)
-    if rng.random() < 0.08:
-        fr = rng.uniform(900, 1900)
-        tick += 0.35 * np.sin(2 * np.pi * fr * t * (1 + 8 * t)) * attack * np.exp(-t / 0.012)
-    return tick
+    # pitched low: most of each drop between about 300 and 1500 Hz
+    fc = rng.uniform(700, 1400) if bright >= 0.5 else rng.uniform(450, 900)
+    raw = rng.standard_normal(ln)
+    noise = lowpass(raw, fc) - lowpass(raw, 220)              # no thump below ~200 Hz
+    noise /= np.abs(noise).max() + 1e-9
+    attack = np.minimum(1, t / rng.uniform(0.003, 0.006))        # a soft start, not a click
+    env = attack * np.exp(-t / rng.uniform(0.008, 0.02))
+    return noise * env
 
 
 def make(seconds, seed, rain, drops, wind):
