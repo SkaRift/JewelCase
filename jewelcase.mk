@@ -61,5 +61,7 @@ release: app
 	cp -r dist/PPSA75837 release/PPSA75837
 	cp docs/release-readme.txt release/PPSA75837/README.txt
 	cp LICENSE release/PPSA75837/LICENSE.txt
+	cp THIRD_PARTY_NOTICES.md release/PPSA75837/THIRD_PARTY_NOTICES.txt
+	cp assets/media/CREDITS.md release/PPSA75837/CREDITS-models.txt
 	cd release && zip -qr PPSA75837.zip PPSA75837
 	sha256sum release/PPSA75837.zip

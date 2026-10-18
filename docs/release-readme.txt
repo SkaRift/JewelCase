@@ -1,4 +1,4 @@
-JEWEL CASE v1.0 - by SkaRift
+JEWEL CASE v1.1 - by SkaRift
 A home-screen ROM launcher for jailbroken PS5 consoles
 =====================================================================
 
@@ -172,8 +172,11 @@ Carousel:
 
 Details screen:
   Left / Right    next / previous game    Cross      play
-  Triangle        favorite                Square     technical info
-  Circle          back
+  Triangle        favorite                Square     file info (and marking
+  Circle          back                               updates installed)
+  Right stick     turn the game around
+
+Only L1 / R1 change system (the D-pad's up and down don't).
 
 The Recently Played and Favorites tabs appear once they have games in
 them.
@@ -183,7 +186,7 @@ SETTINGS
 --------
 Rescan games, Games folder, Create system folders, Download missing covers,
 Redownload all covers, Download covers automatically, Background music,
-Music volume, Rain effect, Show empty systems, Clear recently played,
+Music volume, Menu sounds, Rain effect, Show empty systems, Clear recently played,
 Emulators (what was found), Credits, About.
 
 
@@ -195,7 +198,10 @@ TROUBLESHOOTING
   or RetroArch with a matching core. Settings > Emulators shows what was
   found.
 - Covers not downloading: check the console's internet connection.
-  /data/jewelcase/covers/log.txt shows what the downloader did.
+  /data/jewelcase/covers/log.txt shows what the downloader did (log.old.txt
+  the run before), and covers/lb-stage.txt what Jewel Case did with its
+  LaunchBox data. Settings > Download missing covers looks again for
+  everything not found before.
 - The PS1 emulator (PSXS5) and PS2 emulator (PS5SX2) open their own game
   list instead of starting the game directly: they don't accept a game at
   launch yet. Pick the game again there.
@@ -208,8 +214,9 @@ so installing an update never touches it:
   recent.json, favorites.json, ui-settings.json
   installed.json   updates / DLC you marked as installed in an emulator
   jewelcase.json   (optional, advanced: your own folders and emulators)
-  covers/          downloaded box art
-  music/           your MP3s
+  covers/          downloaded box art, disc scans, screenshots, game info
+                   (covers/lb: the LaunchBox game list for your systems)
+  music/           your MP3s (the built-in rain plays when it's empty)
 Plus short-lived jewelcase-*.txt request files in /data.
 
 

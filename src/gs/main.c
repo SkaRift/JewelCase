@@ -72,7 +72,7 @@ void music_stop(void);
 int music_playing(void);
 const char *music_now(void);
 
-#define GS_VERSION "1.0"
+#define GS_VERSION "1.1"
 #define GS_TITLE_ID "PPSA75837"
 
 #ifdef GS_NATIVE
@@ -3037,7 +3037,7 @@ static void stage_launchbox_(void) {
     int fresh = !was || strcmp(was, key);
     lb_note("on the console before: %.30s -> %s", was ? was : "(none)", fresh ? "copying it" : "up to date");
     if (fresh) {
-        /* 1.1 and earlier downloaded the whole database instead */
+        /* test builds before 1.1 downloaded the whole database instead */
         remove_file(COVER_DIR "/launchbox.idx");
         remove_file(COVER_DIR "/launchbox-info.txt");
         remove_file(COVER_DIR "/launchbox.fail");

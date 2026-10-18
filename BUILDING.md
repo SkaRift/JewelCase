@@ -22,7 +22,8 @@ This builds the three helpers, then compiles, links and signs the app into
 
 `make release` also writes `release/PPSA75837.zip`, the zip for a GitHub release. It has the
 `PPSA75837/` folder at the top, as the PS5 homebrew catalog expects, with `README.txt`
-(from `docs/release-readme.txt`) and `LICENSE.txt` inside it. Raise `contentVersion` in
+(from `docs/release-readme.txt`), `LICENSE.txt`, `THIRD_PARTY_NOTICES.txt` and `CREDITS-models.txt`
+inside it. Raise `contentVersion` in
 `sce_sys/param.json` and `GS_VERSION` in `src/gs/main.c` before each release.
 
 Before a release, refresh the LaunchBox game data the app ships with: download

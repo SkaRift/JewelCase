@@ -59,7 +59,7 @@
 #define STATUS_PATH COVER_DIR "/status.txt"
 #define LOG_PATH COVER_DIR "/log.txt"
 #define PID_PATH COVER_DIR "/jc-art.pid"
-#define AGENT "JewelCase/1.0 (PS5 homebrew launcher)"
+#define AGENT "JewelCase/1.1 (PS5 homebrew launcher)"
 #define MAX_IMAGE (12 << 20)    /* skip anything bigger: not a cover */
 #define CHUNK 32768
 
