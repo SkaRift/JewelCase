@@ -3825,8 +3825,14 @@ static void det_load(Game *g) {
     }
 }
 
-/* the screenshots, full screen behind everything, dimmed; one fades into the next */
-static void draw_det_backdrop(Uint8 a) {
+/* the screenshots, full screen behind the floor, dimmed; one fades into the next */
+static void draw_det_backdrop(Game *g, Uint8 a) {
+    if (g_dx.g != g) det_load(g);
+    else if (SDL_GetTicks() - g_dx.checked > 2000) {
+        /* still downloading: show what arrives */
+        g_dx.checked = SDL_GetTicks();
+        if (det_state(g) != g_dx.state) det_load(g);
+    }
     if (!g_dx.nshots) return;
     const Uint32 HOLD = 6000, FADE = 1200;
     Uint32 now = SDL_GetTicks();
@@ -3848,6 +3854,15 @@ static void draw_det_backdrop(Uint8 a) {
     /* darker on the left, where the text is */
     for (int x = 0; x < 1100; x += 20)
         fill_rect(x, 0, 20, SCREEN_H, 0x06070c, (Uint8)(a * 0.55f * (1.0f - x / 1100.0f)));
+    /* the floor back on top, column by column along its curved far edge */
+    if (T_bg)
+        for (int x = 0; x < SCREEN_W; x += 8) {
+            float top, bot;
+            if (!floor_span(x + 4.0f, &top, &bot)) continue;
+            int y0 = (int)top - 2;
+            SDL_Rect r = {x, y0, 8, SCREEN_H - y0};
+            SDL_RenderCopy(R, T_bg, &r, &r);
+        }
 }
 
 static void draw_details_media(Game *g, Uint32 accent, float t) {
@@ -3901,15 +3916,8 @@ static void draw_details(Uint32 accent) {
         return;
     }
     if (g_det_game != g_sel_game) g_det_game = g_sel_game;
-    if (g_dx.g != g) det_load(g);
-    else if (SDL_GetTicks() - g_dx.checked > 2000) {
-        /* still downloading: show what arrives */
-        g_dx.checked = SDL_GetTicks();
-        if (det_state(g) != g_dx.state) det_load(g);
-    }
     float t = ease(g_det_t);
     Uint8 a = (Uint8)(255 * SDL_min(1.0f, g_det_t * 1.6f));
-    draw_det_backdrop(a);
     draw_details_media(g, accent, t);
 
     if (a < 8) return;
@@ -4349,6 +4357,8 @@ static void render(void) {
     make_background_for(g_nentries ? (g_entries[g_sel_entry].kind == 1 ? g_sys[g_entries[g_sel_entry].sys].color : accent) : 0x2f8fd8);
     if (T_bg) SDL_RenderCopy(R, T_bg, NULL, NULL);
     else fill_rect(0, 0, SCREEN_W, SCREEN_H, 0x12141f, 255);
+    if (g_details && entry_game(g_sel_game))
+        draw_det_backdrop(entry_game(g_sel_game), (Uint8)(255 * SDL_min(1.0f, g_det_t * 1.6f)));
     if (g_rain_on) draw_rain();
     draw_header();
     if (g_nentries == 0) {
