@@ -117,7 +117,7 @@ SETTINGS
 Rescan games, Games folder, Create system folders, Download missing covers,
 Redownload all covers, Download covers automatically, Background music,
 Music volume, Rain effect, Show empty systems, Clear recently played,
-Emulators (what was found), About.
+Emulators (what was found), Credits, About.
 
 
 TROUBLESHOOTING

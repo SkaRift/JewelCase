@@ -4188,7 +4188,7 @@ static int drive_present(int i) {
     return i == 0 || is_dir(DRIVES[i][0]);
 }
 
-enum { SET_RESCAN, SET_ROMDIR, SET_FOLDERS, SET_MISSING, SET_REDOWNLOAD, SET_AUTO, SET_MUSIC, SET_VOLUME, SET_RAIN, SET_EMPTY, SET_CLEAR_RECENT, SET_EMULATORS, SET_ABOUT, SET_COUNT };
+enum { SET_RESCAN, SET_ROMDIR, SET_FOLDERS, SET_MISSING, SET_REDOWNLOAD, SET_AUTO, SET_MUSIC, SET_VOLUME, SET_RAIN, SET_EMPTY, SET_CLEAR_RECENT, SET_EMULATORS, SET_CREDITS, SET_ABOUT, SET_COUNT };
 
 static void save_ui_settings(void) {
     char path[600], out[400];
@@ -4425,6 +4425,11 @@ static void settings_row(int i, const char **label, const char **hint, char *val
         *hint = "Which emulator apps and RetroArch cores were found";
         *icon = ICON_CHIP;
         break;
+    case SET_CREDITS:
+        *label = "Credits";
+        *hint = "Who made the models, art sources and code Jewel Case uses";
+        *icon = ICON_STAR;
+        break;
     default:
         *label = "About Jewel Case";
         *hint = "Made by SkaRift. Version, folders and cover status";
@@ -4633,6 +4638,21 @@ static void settings_activate(void) {
     case SET_EMULATORS:
         show_emulators();
         break;
+    case SET_CREDITS:
+        open_modal("Credits",
+                   "Jewel Case by SkaRift.\n\n"
+                   "Cartridge, card and disc renders, from 3D models (changed: labels blanked, logos removed):\n"
+                   "  SNES: Steven-Bennis   NES: HippoStance   Game Boy: Karolina D   GBA: Vxcl\n"
+                   "  DS / 3DS: Pcwer   Switch: crocoman2019   (all CC BY 4.0, on Sketchfab)\n"
+                   "  N64: ejpman (CC BY-NC 4.0, Printables)   Disc: enjoyboy (CD Jewel Case, Blend Swap)\n\n"
+                   "Art, downloaded on your console:\n"
+                   "  Box art and logos: the libretro-thumbnails project\n"
+                   "  Disc scans: the LaunchBox Games Database and GameTDB\n\n"
+                   "Code: ps5-native-app-boilerplate (BlackBearReloaded), the PS5 payload SDK and\n"
+                   "  ps5-payload-websrv (John Tornblom), SDL2, cJSON, stb, dr_mp3, miniz, Poppins font.\n"
+                   "Thanks to the etaHEN and ShadowMountPlus developers and every emulator's authors.\n\n"
+                   "Full list with links and licenses: THIRD_PARTY_NOTICES.md on github.com/SkaRift/JewelCase");
+        break;
     default: {
         int total = 0, nsys = 0;
         for (int s = 0; s < g_nsys; s++) {
@@ -4646,7 +4666,8 @@ static void settings_activate(void) {
 #endif
         open_modal("Jewel Case " GS_VERSION,
                    "Made by SkaRift\n\n%d games on %d systems.\n\nFolder list: %s\nCovers: %s\n  saved in " COVER_DIR "\n"
-                   "  from the libretro thumbnail collection (github.com/libretro-thumbnails)\n\n"
+                   "  box art from the libretro thumbnail collection (github.com/libretro-thumbnails),\n"
+                   "  disc scans from the LaunchBox Games Database and GameTDB\n\n"
                    "Your own art, named like the game, next to its file or in a covers folder there, "
                    "is used instead of a download.%s%s",
                    total, nsys, fl, g_art_status, g_config_err[0] ? "\n\n" : "", g_config_err);
