@@ -86,7 +86,7 @@ def make(seconds, seed, rain, drops, wind):
         hiss = periodic_noise(n, rng, band(500, 4200, 0.6))
         body = periodic_noise(n, rng, band(450, 1700, 0.6))
         swell = 0.8 + 0.2 * lfo(n, 3, ch * 0.7) * lfo(n, 7, 1.3 + ch)
-        out[ch] += rain * (0.07 * hiss + 0.05 * body) * swell   # a faint wet hiss
+        out[ch] += rain * (0.045 * hiss + 0.032 * body) * swell   # a faint wet hiss
 
     # individual drops, denser when the rain swells
     dens = 0.75 + 0.25 * lfo(n, 3)
