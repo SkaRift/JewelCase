@@ -193,6 +193,117 @@ static void pretty_name(const char *stem, char *out, size_t cap) {
     }
 }
 
+/* ------------------------------------------------------------------------ */
+/* versions, updates and DLC, from file names                               */
+/* ------------------------------------------------------------------------ */
+
+/* a version token: "v131072", "v1.2", "1.2.0" (digits with dots, or v + digits) */
+static int is_version_word(const char *w, size_t n) {
+    size_t i = 0;
+    if (n && (w[0] == 'v' || w[0] == 'V')) i = 1;
+    if (i >= n || !isdigit((unsigned char)w[i])) return 0;
+    int dots = 0;
+    for (; i < n; i++) {
+        if (w[i] == '.') { if (i + 1 >= n || !isdigit((unsigned char)w[i + 1])) return 0; dots++; }
+        else if (!isdigit((unsigned char)w[i])) return 0;
+    }
+    return dots > 0 || w[0] == 'v' || w[0] == 'V';
+}
+
+static int word_is(const char *w, size_t n, const char *k) { return strlen(k) == n && !strncasecmp(w, k, n); }
+
+/* the Switch title ID in "[0100000000010000]", 0 none */
+static unsigned long long switch_tid(const char *stem) {
+    for (const char *p = strchr(stem, '['); p; p = strchr(p + 1, '[')) {
+        int n = 0;
+        while (n < 17 && isxdigit((unsigned char)p[1 + n])) n++;
+        if (n == 16 && p[17] == ']') return strtoull(p + 1, NULL, 16);
+    }
+    return 0;
+}
+
+/* 0 a game, 1 an update, 2 DLC */
+static int name_kind(const char *stem) {
+    unsigned long long tid = switch_tid(stem);
+    if (tid) return (tid & 0xfff) == 0x800 ? 1 : (tid & 0xfff) ? 2 : 0;
+    for (const char *p = stem; *p;) {
+        while (*p && !isalnum((unsigned char)*p)) p++;
+        const char *w = p;
+        while (isalnum((unsigned char)*p)) p++;
+        size_t n = (size_t)(p - w);
+        if (word_is(w, n, "update") || word_is(w, n, "upd") || word_is(w, n, "patch")) return 1;
+        if (word_is(w, n, "dlc")) return 2;
+    }
+    return 0;
+}
+
+/* the version in a file name, "" none */
+static void name_version(const char *stem, char *out, size_t cap) {
+    out[0] = 0;
+    for (const char *p = stem; *p;) {
+        while (*p && !isalnum((unsigned char)*p)) p++;
+        const char *w = p;
+        while (isalnum((unsigned char)*p) || (*p == '.' && isdigit((unsigned char)p[1]))) p++;
+        size_t n = (size_t)(p - w);
+        if (n && is_version_word(w, n)) {
+            const char *v = (w[0] == 'v' || w[0] == 'V') && !strchr(w, '.') ? w : w + ((w[0] | 32) == 'v');
+            snprintf(out, cap, "%.*s", (int)(n - (size_t)(v - w)), v);
+        }
+    }
+}
+
+/* the name with versions, update / DLC words and tags taken out, for grouping */
+static void base_key(const char *stem, char *out, size_t cap) {
+    size_t o = 0;
+    int depth = 0;
+    for (const char *p = stem; *p && o + 2 < cap;) {
+        if (*p == '(' || *p == '[') { depth++; p++; continue; }
+        if (*p == ')' || *p == ']') { if (depth) depth--; p++; continue; }
+        if (depth || !isalnum((unsigned char)*p)) { p++; continue; }
+        const char *w = p;
+        while (isalnum((unsigned char)*p) || (*p == '.' && isdigit((unsigned char)p[1]))) p++;
+        size_t n = (size_t)(p - w);
+        if (is_version_word(w, n) || word_is(w, n, "update") || word_is(w, n, "upd") || word_is(w, n, "patch") ||
+            word_is(w, n, "dlc") || word_is(w, n, "base") || word_is(w, n, "the"))
+            continue;
+        for (size_t i = 0; i < n && o + 1 < cap; i++)
+            if (isalnum((unsigned char)w[i])) out[o++] = (char)tolower((unsigned char)w[i]);
+    }
+    out[o] = 0;
+}
+
+/* "Mario Odyssey 1.0" -> "Mario Odyssey": the version is shown on its own */
+static void drop_version_words(char *title) {
+    char out[160];
+    size_t o = 0;
+    for (const char *p = title; *p && o + 1 < sizeof(out);) {
+        const char *w = p;
+        while (*p && *p != ' ') p++;
+        size_t n = (size_t)(p - w);
+        if (!is_version_word(w, n)) {
+            if (o && o + 1 < sizeof(out)) out[o++] = ' ';
+            for (size_t i = 0; i < n && o + 1 < sizeof(out); i++) out[o++] = w[i];
+        }
+        while (*p == ' ') p++;
+    }
+    out[o] = 0;
+    while (o && (out[o - 1] == '-' || out[o - 1] == ' ')) out[--o] = 0;
+    if (out[0]) scopy(title, 160, out);
+}
+
+static int version_newer(const char *a, const char *b) {   /* a > b */
+    while (*a == 'v' || *a == 'V') a++;
+    while (*b == 'v' || *b == 'V') b++;
+    for (;;) {
+        long x = strtol(a, (char **)&a, 10), y = strtol(b, (char **)&b, 10);
+        if (x != y) return x > y;
+        if (*a != '.' && *b != '.') return 0;
+        if (*a == '.') a++;
+        if (*b == '.') b++;
+        if (!*a && !*b) return 0;
+    }
+}
+
 static int disc_number(const char *stem) {
     char low[512];
     scopy(low, sizeof(low), stem);
@@ -445,6 +556,9 @@ typedef struct Game {
     int extra_pending;          /* disc: its logo / disc scan not looked for yet */
     int extra_state;            /* what extras_state() said when the image was built */
     Uint32 cover_check;         /* last time a pending cover was looked for */
+    char ver[32];               /* its version, from the file name ("1.0", "v131072"), or "" */
+    char upd[32];               /* the newest update file next to it: its version, or "yes" */
+    int nupd, ndlc;             /* update and DLC files grouped under it */
 } Game;
 
 typedef struct {
@@ -1265,6 +1379,51 @@ static void push_game(System *s, int *cap, const char *title, const char *path, 
     else stem_of(base, g->stem, sizeof(g->stem));
 }
 
+/* update and DLC files go under their game instead of showing as games of their own
+ * (kept as games when there's no game for them) */
+static void group_updates(System *s) {
+    for (int i = 0; i < s->ngames; i++) {
+        Game *g = &s->games[i];
+        name_version(g->stem, g->ver, sizeof(g->ver));
+        if (name_kind(g->stem) == 0) drop_version_words(g->title);
+    }
+    for (int i = 0; i < s->ngames;) {
+        Game *u = &s->games[i];
+        int kind = name_kind(u->stem);
+        int base = -1;
+        if (kind) {
+            unsigned long long tid = switch_tid(u->stem), want = 0;
+            if (tid) want = kind == 1 ? (tid & ~0xfffULL) : ((tid - 0x1000) & ~0xfffULL);
+            char ku[256], kg[256];
+            base_key(u->stem, ku, sizeof(ku));
+            for (int j = 0; j < s->ngames && base < 0; j++) {
+                if (j == i || name_kind(s->games[j].stem)) continue;
+                unsigned long long gt = switch_tid(s->games[j].stem);
+                if (want && gt) {
+                    if (gt == want) base = j;
+                    continue;
+                }
+                base_key(s->games[j].stem, kg, sizeof(kg));
+                if (ku[0] && !strcmp(ku, kg)) base = j;
+            }
+        }
+        if (base < 0) {
+            i++;
+            continue;
+        }
+        Game *b = &s->games[base];
+        if (kind == 1) {
+            b->nupd++;
+            if (!b->upd[0] || !strcmp(b->upd, "yes") || (u->ver[0] && version_newer(u->ver, b->upd)))
+                scopy(b->upd, sizeof(b->upd), u->ver[0] ? u->ver : "yes");
+        } else {
+            b->ndlc++;
+        }
+        memmove(u, u + 1, sizeof(Game) * (size_t)(s->ngames - i - 1));
+        s->ngames--;
+    }
+}
+
 static void scan_system(System *s) {
     int cap = 0;
     s->games = NULL;
@@ -1349,6 +1508,7 @@ static void scan_system(System *s) {
         }
         free(top);
     }
+    group_updates(s);
     if (s->ngames > 1) qsort(s->games, (size_t)s->ngames, sizeof(Game), game_cmp);
 }
 
@@ -4119,9 +4279,21 @@ static void draw_details(Uint32 accent) {
     else if (s->core_name[0]) snprintf(emu, sizeof(emu), "%s \xc2\xb7 %s", g_emus[s->emu].name, s->core_name);
     else scopy(emu, sizeof(emu), g_emus[s->emu].name);
     snprintf(cnt, sizeof(cnt), "%d of %d", g_sel_game + 1, entry_count());
+    /* its version, and any update / DLC files grouped under it */
+    char ver[64] = "", upd[96] = "";
+    if (g->ver[0]) snprintf(ver, sizeof(ver), "Version %s", g->ver);
+    if (g->nupd || g->ndlc) {
+        int n = 0;
+        if (g->nupd)
+            n += snprintf(upd + n, sizeof(upd) - n, strcmp(g->upd, "yes") ? "Update %s" : "Update", g->upd);
+        if (g->ndlc && n < (int)sizeof(upd))
+            snprintf(upd + n, sizeof(upd) - n, "%s%d DLC", n ? " \xc2\xb7 " : "", g->ndlc);
+    }
     int cx = x, cyy = y + 23;
-    struct { int icon; const char *t; } chips[] = {{ICON_CLOCK, ago}, {ICON_CHIP, emu}, {ICON_STACK, cnt}};
-    for (int i = 0; i < 3; i++) {
+    struct { int icon; const char *t; } chips[] = {
+        {ICON_CLOCK, ago}, {ICON_CHIP, emu}, {ICON_STACK, cnt}, {ICON_CARD, ver}, {ICON_DOWNLOAD, upd}};
+    for (int i = 0; i < 5; i++) {
+        if (!chips[i].t[0]) continue;
         int w = chip(0, 0, chips[i].icon, chips[i].t, 0);
         if (cx + w > x + 900) {
             cx = x;
