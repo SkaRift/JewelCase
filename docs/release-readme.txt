@@ -55,9 +55,9 @@ Folder names: nes snes n64 gb gbc gba nds 3ds genesis sms gg pce psx psp
 ps2 ps3 gc wii wiiu dc saturn segacd 32x switch xbox xbox360 arcade, and
 more (see the guide).
 
-Games in your emulators' own folders are listed too: PS1 games in
-/data/SwanStationPS5/games, /data/PSXS5/games (or a SwanStationPS5 or
-PSXS5 folder on a drive), and PS2 games in /data/PCSX2/games.
+PS1 games in SwanStationPS5's and PSXS5's own folders are listed too:
+/data/SwanStationPS5/games, /data/PSXS5/games, or a SwanStationPS5 or
+PSXS5 folder on a drive.
 
 After adding games, use Settings > Rescan games (or restart Jewel Case).
 
@@ -215,15 +215,11 @@ TROUBLESHOOTING
   the run before), and covers/lb-stage.txt what Jewel Case did with its
   LaunchBox data. Settings > Download missing covers looks again for
   everything not found before.
-- PSXS5 (PS1) opens its own game list instead of starting the game: it
-  doesn't accept a game at launch. SwanStationPS5 starts PS1 games
-  directly, but only games in its own folders (see ADDING GAMES); for
-  others it opens its game list too.
-- PS2 games start directly in PS5SX2, through the request file its own
-  disc feature reads (/data/PCSX2/logs/disc-launch.txt). If PS5SX2 opens
-  its game list instead, a newer PS5SX2 may have changed that. If PS5SX2
-  itself stays on a black screen, check that its PS5SX2 Helper payload is
-  loaded: that's PS5SX2's own start-up, not Jewel Case.
+- The PS1 emulators (SwanStationPS5, PSXS5) and the PS2 emulator
+  (PS5SX2) open their own main menu instead of starting the game. Pick
+  the game again there.
+- PS5SX2 stays on a black screen: check that its PS5SX2 Helper payload is
+  loaded. That's PS5SX2's own start-up, not Jewel Case.
 
 
 FILES JEWEL CASE KEEPS

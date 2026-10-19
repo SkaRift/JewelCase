@@ -98,9 +98,8 @@ drive):
 `/data/roms` listing each folder and the file types it takes. After adding games, use
 **Settings → Rescan games**.
 
-Games in your emulators' own folders are listed too: PS1 games in SwanStationPS5's and PSXS5's
-`games` folders (`/data/SwanStationPS5/games`, `/data/PSXS5/games`, or a `SwanStationPS5` /
-`PSXS5` folder on a drive), and PS2 games in PS5SX2's `/data/PCSX2/games`.
+PS1 games in SwanStationPS5's and PSXS5's own `games` folders (`/data/SwanStationPS5/games`,
+`/data/PSXS5/games`, or a `SwanStationPS5` / `PSXS5` folder on a drive) are listed too.
 
 No-Intro / Redump style file names, such as `Super Mario World (USA).sfc`, match covers
 best. To use your own art, put a `.png` or `.jpg` named like the game next to its file, or
@@ -190,11 +189,8 @@ make host     # PC test build, needs SDL2 (build-host/jewelcase --fsroot <folder
 
 ## Known limitations
 
-- PSXS5 doesn't accept a game at launch, so it opens its own game list. SwanStationPS5 starts
-  PS1 games directly, but only games in its own folders (see [Adding games](#adding-games));
-  for others it opens its game list.
-- PS2 games start directly in PS5SX2 through the request file its own disc feature uses
-  (`/data/PCSX2/logs/disc-launch.txt`). If PS5SX2 changes that, it opens its game list instead.
+- SwanStationPS5, PSXS5 (PS1) and PS5SX2 (PS2) open their own main menu instead of starting the
+  game: pick the game again there.
 - Cover matching works from file names, so heavily renamed files may get no cover. Add your
   own art for those.
 - Jewel Case can't install updates or DLC into an emulator, or check what the emulator has

@@ -2,13 +2,10 @@
 
 ## 1.1.1
 
-- PS2 games start directly in PS5SX2 (Jewel Case hands it the game through the request file
-  its own disc feature reads, `/data/PCSX2/logs/disc-launch.txt`). PS5SX2's own `games` folder
-  is listed too.
-- PS1: SwanStationPS5 (darkxex's PSXS5 fork) is supported and preferred over PSXS5. It starts
-  games directly when they're in its own folders, which Jewel Case now lists too
+- PS1: SwanStationPS5 (darkxex's PSXS5 fork) is supported and preferred over PSXS5. It opens
+  its own main menu, where you pick the game. Games in SwanStationPS5's and PSXS5's own folders
   (`/data/SwanStationPS5/games`, `/data/PSXS5/games`, `SwanStationPS5` / `PSXS5` folders on
-  drives). PSXS5 still opens its own game list.
+  drives) are listed too.
 - Switch: update and DLC files with hash names no longer show as extra games; Jewel Case reads
   the title ID inside each .nsp / .nsz and groups them with their game.
 - Switch with ProsperoEden: **Update** in File info moves a game's update and DLC into

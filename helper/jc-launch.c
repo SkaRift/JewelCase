@@ -10,8 +10,8 @@
  *   title=PPSA99169
  *   arg=--ps5-mode=game        (zero or more)
  *   write=<path>\t<line>       (zero or more) a file to write before the app
- *                              starts: PS5SX2 starts the game named in
- *                              /data/PCSX2/logs/disc-launch.txt. Its folder is
+ *                              starts (an emulator's own request file, named by
+ *                              requestFile in jewelcase.json). Its folder is
  *                              made if missing. Removed again if the app
  *                              doesn't start, so it can't start a game later.
  *

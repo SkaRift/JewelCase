@@ -1,19 +1,15 @@
 # Jewel Case 1.1.1
 
-PS1 and PS2 games start straight into the game, Switch updates are tidier, and a few fixes.
+SwanStationPS5 support, tidier Switch updates, and a few fixes.
 
 ## What's new
 
-**PS1 and PS2 start the game directly**
-- **PS2 (PS5SX2):** pick a game and PS5SX2 boots it, no second pick in its own list. Jewel Case
-  hands it the game through the request file PS5SX2's own disc feature reads. Games in
-  PS5SX2's own `games` folder (its disc copies) show up in Jewel Case too.
-- **PS1 (SwanStationPS5):** darkxex's SwanStationPS5 is now supported and used ahead of PSXS5.
-  It boots games directly when they're in its own folders (`/data/SwanStationPS5/games`,
-  `/data/PSXS5/games`, or a `SwanStationPS5` / `PSXS5` folder on a drive), and Jewel Case now
-  lists games from those folders. File info tells you when a game is somewhere it can't boot
-  from.
-- PSXS5 still opens its own game list (it doesn't accept a game at launch).
+**PS1: SwanStationPS5**
+- darkxex's SwanStationPS5 is now supported and used ahead of PSXS5. Like PSXS5, it opens its
+  own main menu, where you pick the game.
+- PS1 games in SwanStationPS5's and PSXS5's own folders (`/data/SwanStationPS5/games`,
+  `/data/PSXS5/games`, or a `SwanStationPS5` / `PSXS5` folder on a drive) now show up in
+  Jewel Case too.
 
 **Switch**
 - Update and DLC files with hash names (like `001d8d5a7fe8d0cbd148ff67d3b830a1.nsp`) no longer
@@ -44,9 +40,7 @@ folder for folders, controls and troubleshooting.
 
 ## Known limitations
 
-- PS2 direct start depends on PS5SX2's disc request file; a future PS5SX2 could change it,
-  and then PS5SX2 opens its own list instead. PS5SX2 also needs its PS5SX2 Helper payload to
-  start at all.
-- SwanStationPS5 only boots games from its own folders; for games elsewhere it opens its list.
+- SwanStationPS5, PSXS5 (PS1) and PS5SX2 (PS2) open their own main menu instead of starting the
+  game; pick it again there.
 - Jewel Case can't install updates or DLC into an emulator itself; ProsperoEden doesn't need
   it, other emulators install them from their own menu.

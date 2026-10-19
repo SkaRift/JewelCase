@@ -762,9 +762,8 @@ static const char *DEFAULT_ROOTS[] = {
     "/mnt/ext0/homebrew/roms", "/mnt/ext1/homebrew/roms"
 };
 
-/* emulators' own games folders, listed as that system's games too: a game there is one the
- * emulator can start by itself (SwanStationPS5 only starts games from its library), and PS5SX2's
- * disc copies land in its games folder */
+/* emulators' own games folders, listed as that system's games too (SwanStationPS5's and
+ * PSXS5's PS1 games) */
 static const char *EMU_DRIVES[] = {"/mnt/usb0", "/mnt/usb1", "/mnt/usb2", "/mnt/usb3", "/mnt/usb4",
                                    "/mnt/usb5", "/mnt/usb6", "/mnt/usb7", "/mnt/ext0", "/mnt/ext1"};
 
@@ -783,19 +782,7 @@ static int emu_game_dirs(const char *sys, char (*out)[256], int max) {
                 if (n < max) snprintf(out[n++], 256, "%s/%s/games", EMU_DRIVES[d], names[k]);
             }
     }
-    if ((all || !strcmp(sys, "ps2")) && n < max) scopy(out[n++], 256, "/data/PCSX2/games");
     return n;
-}
-
-/* is `path` inside one of SwanStationPS5's games folders (so it can start it by itself)? */
-static int in_swanstation_library(const char *path) {
-    static char dirs[64][256];
-    int n = emu_game_dirs("psx", dirs, 64);
-    for (int i = 0; i < n; i++) {
-        size_t l = strlen(dirs[i]);
-        if (!strncmp(path, dirs[i], l) && path[l] == '/') return 1;
-    }
-    return 0;
 }
 
 static void split_into(const char *s, char sep, char (*dst)[48], int *n, int max) {
@@ -900,16 +887,11 @@ static void default_emulators(void) {
      * so the game goes in both (it ignores anything after argv[1]) */
     app_emu("mupen_app", "Mupen64Plus PS5", "PPSA99064", "mupen", "{rom}\n{rom}");
     app_emu("psflycast", "PSFlycast", "PPSA99247", "flycast", "{rom}");
-    /* PS5SX2 takes no launch arguments. It starts the game named on the first line of
-     * /data/PCSX2/logs/disc-launch.txt (its disc payload's request; it reads and deletes it at
-     * start), so jc-launch.elf writes that file, then starts it. */
-    e = app_emu("ps5sx2_app", "PS5SX2", "PPSA99203", "ps5sx2", "");
-    scopy(e->req_file, sizeof(e->req_file), "/data/PCSX2/logs/disc-launch.txt");
-    scopy(e->req_text, sizeof(e->req_text), "{rom}");
-    /* SwanStationPS5 (darkxex's PSXS5 fork) takes the forwarder format, for games in its library
-     * (its games folders, see emu_game_dirs); it opens its shelf for others */
+    /* SwanStationPS5 (darkxex's PSXS5 fork) is given the forwarder format, but on the console it
+     * opens its own menu: pick the game there */
     app_emu("swanstation_app", "SwanStationPS5", "PPSA98510", "swanstation", "--rom\n{rom}\n--exit-after-game");
     /* no launch arguments: these open the app */
+    app_emu("ps5sx2_app", "PS5SX2", "PPSA99203", "ps5sx2", "");
     app_emu("xpsemu_app", "XPSemu", "PPSA97358", "xpsemu|xemu", "");
     app_emu("psxs5", "PSXS5", "PPSA97510", "psxs5", "");
     e = emu_add("mednafen", "Mednafen", "mednafen", "", "mednafen.elf|eboot.elf", "{rom}");
@@ -2140,7 +2122,7 @@ typedef struct {
     char argv_list[MAX_LIST][1400]; int nargv;   /* unescaped, for the native helper */
     char request_path[700]; /* PS5 RetroArch: game-request.txt to write first */
     char request[3000];
-    char write_path[300];   /* a request file jc-launch.elf writes first (PS5SX2's disc-launch.txt) */
+    char write_path[300];   /* a request file jc-launch.elf writes first (requestFile in jewelcase.json) */
     char write_text[1400];
 } LaunchCmd;
 
@@ -2206,12 +2188,6 @@ static int build_launch(Game *g, LaunchCmd *lc) {
         fill_tokens(e->req_text, lc->write_text, sizeof(lc->write_text), g->path, e->dir, s->core_path, g->dir);
         size_t pl = strlen(lc->pretty);
         snprintf(lc->pretty + pl, sizeof(lc->pretty) - pl, "\n  request: %s\n    %s", lc->write_path, lc->write_text);
-    }
-    if (!strcmp(e->id, "swanstation_app") && !in_swanstation_library(g->path)) {
-        size_t pl = strlen(lc->pretty);
-        snprintf(lc->pretty + pl, sizeof(lc->pretty) - pl,
-                 "\n  (SwanStationPS5 starts only games in its own folders, such as\n"
-                 "  /data/PSXS5/games: for this one it opens its shelf)");
     }
     for (int i = 0; i < e->nenv; i++) {
         char v[700], kv[800];
