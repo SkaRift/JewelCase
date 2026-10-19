@@ -42,7 +42,6 @@ sets `PS5_HOST` for `make deploy`.
 |---|---|
 | `helper/jc-launch.c` | Closes Jewel Case and starts the emulator app with the game. |
 | `helper/jc-scan.c` | Lists the game, app and music folders. Apps can't list folders inside the sandbox. |
-| `helper/nx_version.h` | Reads a Switch file's display version from its control data with the user's keys (used by jc-scan and the PC build). |
 | `helper/jc-art.c` | Downloads cover art from libretro-thumbnails, streaming it to disk. |
 
 `make helpers` builds only these, with the payload SDK in `.deps/` (or `PS5_PAYLOAD_SDK`).

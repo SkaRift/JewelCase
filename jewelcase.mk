@@ -26,7 +26,7 @@ PAYLOAD_CFLAGS := -Wall -O2
 
 helper/jc-launch.elf: helper/jc-launch.c
 	$(PAYLOAD_CC) $(PAYLOAD_CFLAGS) -o $@ $< -lSceSystemService -lSceUserService
-helper/jc-scan.elf: helper/jc-scan.c helper/nx_version.h
+helper/jc-scan.elf: helper/jc-scan.c
 	$(PAYLOAD_CC) $(PAYLOAD_CFLAGS) -o $@ $<
 # jc-art does HTTPS itself with PacBrew's curl and OpenSSL (the console's SSL refuses payloads)
 PACBREW_HOMEBREW = $(firstword $(wildcard $(CURDIR)/.deps/pacbrew/*/sysroot/user/homebrew) $(PS5_PAYLOAD_SDK)/target/user/homebrew)

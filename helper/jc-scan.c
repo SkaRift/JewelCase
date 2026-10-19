@@ -15,13 +15,9 @@
  *   D\t<path>                       a folder
  *   F\t<path>                       a file
  *   T\t<titleId>\t<folder>\t<name>  an installed app (from sce_sys/param.json)
- *   S\t<path>\t<title ID>\t<kind>\t<version>\t<display version>
- *                                   a Switch .nsp / .nsz: what it holds, read from its
- *                                   (unencrypted) table of contents: kind G game, U update,
- *                                   D DLC; version "-" when it doesn't say. The display
- *                                   version ("1.4.0") is read from the game's or update's
- *                                   control data with ProsperoEden's keys (nx_version.h),
- *                                   "-" without them
+ *   S\t<path>\t<title ID>\t<kind>\t<version>   a Switch .nsp / .nsz: what it holds, read
+ *                                   from its (unencrypted) table of contents: kind G game,
+ *                                   U update, D DLC; version "-" when it doesn't say
  *   P\t<folder>                     ProsperoEden's game files folder (its settings)
  *   end
  * More request lines:
@@ -36,8 +32,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#include "nx_version.h"
 
 #define REQUEST "/data/jewelcase-scan.txt"
 #define INDEX "/data/jewelcase-index.txt"
@@ -98,26 +92,6 @@ static const char *xml_tag(const char *x, const char *tag, char *out, size_t cap
   return out;
 }
 
-static const char *prospero_base(void);
-
-/* ProsperoEden's keys (<game files folder>/keys), loaded once: NULL without them */
-static const NxKeys *
-switch_keys(void) {
-  static NxKeys keys;
-  static int tried, ok;
-  if(!tried) {
-    tried = 1;
-    const char *dirs[2] = {prospero_base(), "/data/prosperoeden"};
-    for(int i = 0; i < 2 && !ok; i++) {
-      char prod[700], title[700];
-      snprintf(prod, sizeof prod, "%s/keys/prod.keys", dirs[i]);
-      snprintf(title, sizeof title, "%s/keys/title.keys", dirs[i]);
-      ok = nx_keys_load(&keys, prod, title);
-    }
-  }
-  return ok ? &keys : NULL;
-}
-
 static void
 switch_info(FILE *out, const char *path) {
   FILE *f = fopen(path, "rb");
@@ -164,15 +138,10 @@ switch_info(FILE *out, const char *path) {
       }
     }
   }
-  if(!tid) {
-    fclose(f);
-    return;
-  }
-  if(!kind) kind = (tid & 0xfff) == 0x800 ? 'U' : (tid & 0xfff) ? 'D' : 'G';
-  char dver[24] = "-";
-  if(kind != 'D' && nx_nsp_version(f, switch_keys(), dver, sizeof dver)) snprintf(dver, sizeof dver, "-");
   fclose(f);
-  fprintf(out, "S\t%s\t%016llX\t%c\t%s\t%s\n", path, tid, kind, ver, dver);
+  if(!tid) return;
+  if(!kind) kind = (tid & 0xfff) == 0x800 ? 'U' : (tid & 0xfff) ? 'D' : 'G';
+  fprintf(out, "S\t%s\t%016llX\t%c\t%s\n", path, tid, kind, ver);
 }
 
 static int ends_with(const char *s, const char *suf) {
@@ -183,10 +152,8 @@ static int ends_with(const char *s, const char *suf) {
 static void walk(FILE *out, const char *dir, int depth, int app_levels);
 
 /* ProsperoEden's game files folder, from its settings ("game_files"), default /data/prosperoeden */
-static const char *
-prospero_base(void) {
-  static char base[600];
-  if(base[0]) return base;
+static void
+prospero_folder(FILE *out) {
   FILE *f = fopen("/data/prosperoeden/config/prosperoeden.json", "r");
   char gf[600] = "";
   if(f) {
@@ -207,15 +174,7 @@ prospero_base(void) {
       }
     }
   }
-  snprintf(base, sizeof base, "%s", gf[0] == '/' ? gf : "/data/prosperoeden");
-  size_t l = strlen(base);
-  while(l > 1 && base[l - 1] == '/') base[--l] = 0;
-  return base;
-}
-
-static void
-prospero_folder(FILE *out) {
-  const char *base = prospero_base();
+  const char *base = gf[0] == '/' ? gf : "/data/prosperoeden";
   fprintf(out, "P\t%s\n", base);
   /* its games (one folder each, the update and DLC beside them) and its updates folder */
   static const char *const sub[] = {"roms", "updates"};
