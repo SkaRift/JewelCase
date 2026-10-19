@@ -2047,10 +2047,8 @@ static int upd_state(const Game *g, char *text, size_t cap) {
     if (uses_pe(g) && (g->nupd || g->ndlc || g->nother)) {
         /* ProsperoEden applies them by itself, once they're where it looks */
         int done = g->nunapplied == 0, n = 0;
-        int ver = g->nupd && strcmp(g->upd, "yes");
-        if (g->nupd)
-            n += snprintf(text + n, cap - n, done ? (ver ? "Updated to %s" : "Updated%s") : (ver ? "Update %s available" : "Update available%s"),
-                          ver ? g->upd : "");
+        /* no version numbers: a file's title version (v327680) isn't the version the game shows */
+        if (g->nupd) n += snprintf(text + n, cap - n, done ? "Updated" : "Update available");
         if (g->ndlc && n < (int)cap) n += snprintf(text + n, cap - n, "%s%d DLC%s", n ? "  \xc2\xb7  " : "", g->ndlc, done || g->nupd ? "" : " available");
         if (g->nother && n < (int)cap)
             snprintf(text + n, cap - n, "%s%d more file%s", n ? "  \xc2\xb7  " : "", g->nother, g->nother == 1 ? "" : "s");
@@ -5132,8 +5130,8 @@ static void draw_details(Uint32 accent) {
     else scopy(emu, sizeof(emu), g_emus[s->emu].name);
     snprintf(cnt, sizeof(cnt), "%d of %d", g_sel_game + 1, entry_count());
     /* its version, and any update / DLC files grouped under it */
+    /* no version chip: a file's version (v0, v327680) isn't the one the game shows */
     char ver[64] = "", upd[160];
-    if (g->ver[0]) snprintf(ver, sizeof(ver), "Version %s", g->ver);
     int ust = upd_state(g, upd, sizeof(upd));
     int cx = x, cyy = y + 23;
     struct { int icon; const char *t; } chips[] = {

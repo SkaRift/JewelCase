@@ -9,6 +9,9 @@
 - Switch: a `firmware` folder in the Switch games folder is skipped (its .nca files showed as a
   game), and an update or DLC in an `updates`, `update` or `dlc` folder of your own shows only
   with its game, like ProsperoEden's updates folder.
+- Details screen: no version numbers. Without update files there's no version chip; with one
+  the chip says **Update available** (yellow) or **Updated** (green). A file's title version
+  (v327680) isn't the version the game shows.
 - PS2 with PS5SX2: games start directly. jc-launch.elf writes the game into PS5SX2's
   `logs/disc-launch.txt` (its disc payload's request) before starting it; PS5SX2 takes no
   launch arguments. PS5SX2's own `games` folder is listed too (its disc copies).
