@@ -6,6 +6,16 @@
   the title ID inside each .nsp / .nsz and groups them with their game.
 - Switch with ProsperoEden: **Update** in File info moves a game's update and DLC into
   ProsperoEden's updates folder; the game then shows **Updated** and isn't offered it again.
+- PS2 with PS5SX2: games start directly. jc-launch.elf writes the game into PS5SX2's
+  `logs/disc-launch.txt` (its disc payload's request) before starting it; PS5SX2 takes no
+  launch arguments. PS5SX2's own `games` folder is listed too (its disc copies).
+- PS1 with SwanStationPS5 (darkxex's PSXS5 fork): games start directly (`--rom`), and it's
+  preferred over PSXS5 when installed. It starts only games in its own folders
+  (`/data/PSXS5/games`, `/data/SwanStationPS5/games`, `PSXS5` / `SwanStationPS5` folders on
+  drives), so Jewel Case lists those too, and File info says so for a game elsewhere.
+- PSXS5 still only opens (it takes no launch arguments).
+- Custom installed-app emulators in `jewelcase.json` can name a request file to write first
+  (`requestFile`, `requestLine`).
 
 ## 1.1
 

@@ -571,6 +571,8 @@ typedef struct {
     char title_match[48];       /* installed app: match its titleName ("a|b": either) */
     char title_ids[64];         /* installed app: known title IDs ("PPSA1|PPSA2") */
     int ps5ra;                  /* PS5 RetroArch title with game mode (request file) */
+    char req_file[256];         /* installed app: a file jc-launch.elf writes before starting it */
+    char req_text[256];         /* ... and its one line ({rom} etc. filled in) */
     int found;
 } Emu;
 
@@ -759,6 +761,42 @@ static const char *DEFAULT_ROOTS[] = {
     "/mnt/ext0/homebrew/roms", "/mnt/ext1/homebrew/roms"
 };
 
+/* emulators' own games folders, listed as that system's games too: a game there is one the
+ * emulator can start by itself (SwanStationPS5 only starts games from its library), and PS5SX2's
+ * disc copies land in its games folder */
+static const char *EMU_DRIVES[] = {"/mnt/usb0", "/mnt/usb1", "/mnt/usb2", "/mnt/usb3", "/mnt/usb4",
+                                   "/mnt/usb5", "/mnt/usb6", "/mnt/usb7", "/mnt/ext0", "/mnt/ext1"};
+
+/* the folders for system `sys` ("" for every system's); returns how many */
+static int emu_game_dirs(const char *sys, char (*out)[256], int max) {
+    int n = 0;
+    int all = !sys[0];
+    if (all || !strcmp(sys, "psx")) {
+        const char *fixed[] = {"/data/SwanStationPS5/games", "/data/PSXS5/games", "/data/homebrew/PPSA99248/games"};
+        for (size_t i = 0; i < sizeof(fixed) / sizeof(*fixed) && n < max; i++) scopy(out[n++], 256, fixed[i]);
+        /* SwanStationPS5 looks at <drive>/<name> and <drive>/<name>/games on every drive */
+        const char *names[] = {"SwanStationPS5", "PSXS5"};
+        for (size_t d = 0; d < sizeof(EMU_DRIVES) / sizeof(*EMU_DRIVES); d++)
+            for (int k = 0; k < 2; k++) {
+                if (n < max) snprintf(out[n++], 256, "%s/%s", EMU_DRIVES[d], names[k]);
+                if (n < max) snprintf(out[n++], 256, "%s/%s/games", EMU_DRIVES[d], names[k]);
+            }
+    }
+    if ((all || !strcmp(sys, "ps2")) && n < max) scopy(out[n++], 256, "/data/PCSX2/games");
+    return n;
+}
+
+/* is `path` inside one of SwanStationPS5's games folders (so it can start it by itself)? */
+static int in_swanstation_library(const char *path) {
+    static char dirs[64][256];
+    int n = emu_game_dirs("psx", dirs, 64);
+    for (int i = 0; i < n; i++) {
+        size_t l = strlen(dirs[i]);
+        if (!strncmp(path, dirs[i], l) && path[l] == '/') return 1;
+    }
+    return 0;
+}
+
 static void split_into(const char *s, char sep, char (*dst)[48], int *n, int max) {
     *n = 0;
     const char *p = s;
@@ -861,8 +899,16 @@ static void default_emulators(void) {
      * so the game goes in both (it ignores anything after argv[1]) */
     app_emu("mupen_app", "Mupen64Plus PS5", "PPSA99064", "mupen", "{rom}\n{rom}");
     app_emu("psflycast", "PSFlycast", "PPSA99247", "flycast", "{rom}");
-    /* no launch arguments yet: these open the app (PS5SX2's forwarder support is a pending PR) */
-    app_emu("ps5sx2_app", "PS5SX2", "PPSA99203", "ps5sx2", "--rom\n{rom}\n--exit-after-game");
+    /* PS5SX2 takes no launch arguments. It starts the game named on the first line of
+     * /data/PCSX2/logs/disc-launch.txt (its disc payload's request; it reads and deletes it at
+     * start), so jc-launch.elf writes that file, then starts it. */
+    e = app_emu("ps5sx2_app", "PS5SX2", "PPSA99203", "ps5sx2", "");
+    scopy(e->req_file, sizeof(e->req_file), "/data/PCSX2/logs/disc-launch.txt");
+    scopy(e->req_text, sizeof(e->req_text), "{rom}");
+    /* SwanStationPS5 (darkxex's PSXS5 fork) takes the forwarder format, for games in its library
+     * (its games folders, see emu_game_dirs); it opens its shelf for others */
+    app_emu("swanstation_app", "SwanStationPS5", "PPSA98510", "swanstation", "--rom\n{rom}\n--exit-after-game");
+    /* no launch arguments: these open the app */
     app_emu("xpsemu_app", "XPSemu", "PPSA97358", "xpsemu|xemu", "");
     app_emu("psxs5", "PSXS5", "PPSA97510", "psxs5", "");
     e = emu_add("mednafen", "Mednafen", "mednafen", "", "mednafen.elf|eboot.elf", "{rom}");
@@ -966,7 +1012,7 @@ static void default_systems(void) {
     sys_add("arcade", "Arcade", "ARC", 0xe0b12c, "arcade,fbneo,mame,neogeo", "zip,7z",
             "retroarch:fbneo,mame2003_plus,mame2010", 0);
     sys_add("psx", "PlayStation", "PS1", 0x8f96a3, "psx,ps1,playstation", "m3u,cue,chd,pbp,iso",
-            "psxs5;retroarch:swanstation,pcsx_rearmed,mednafen_psx_hw,mednafen_psx;mednafen", 0);
+            "swanstation_app;psxs5;retroarch:swanstation,pcsx_rearmed,mednafen_psx_hw,mednafen_psx;mednafen", 0);
     sys_add("psp", "PSP", "PSP", 0x3e4a5c, "psp", "iso,cso,chd,pbp", "retroarch:ppsspp", 0);
     sys_add("ps2", "PlayStation 2", "PS2", 0x1f4fa8, "ps2", "iso,chd,cso,bin", "ps5sx2_app;ps2;retroarch:pcsx2,ps5sx2,lrps2", 0);
     sys_add("ps3", "PlayStation 3", "PS3", 0x5b6170, "ps3", "iso", "ps3", 1);
@@ -1073,6 +1119,8 @@ static void load_config(char *err, size_t errcap) {
         if ((v = cJSON_GetObjectItem(eo, "match")) && cJSON_IsString(v)) split_into(v->valuestring, '|', e->match, &e->nmatch, MAX_LIST);
         if ((v = cJSON_GetObjectItem(eo, "exclude")) && cJSON_IsString(v)) split_into(v->valuestring, '|', e->exclude, &e->nexclude, MAX_LIST);
         if ((v = cJSON_GetObjectItem(eo, "coresDir")) && cJSON_IsString(v)) scopy(e->cores_dir, sizeof(e->cores_dir), v->valuestring);
+        if ((v = cJSON_GetObjectItem(eo, "requestFile")) && cJSON_IsString(v)) scopy(e->req_file, sizeof(e->req_file), v->valuestring);
+        if ((v = cJSON_GetObjectItem(eo, "requestLine")) && cJSON_IsString(v)) scopy(e->req_text, sizeof(e->req_text), v->valuestring);
         if ((v = cJSON_GetObjectItem(eo, "elf")) && cJSON_IsArray(v)) {
             e->nelf = 0;
             cJSON *it;
@@ -1715,6 +1763,76 @@ static void scan_game_folders(System *s, int *cap, const char *dir, int files_to
     free(ents);
 }
 
+/* one folder of games: its files (and, for Switch, its game folders; for folder systems, its
+ * subfolders) with their art */
+static void scan_rom_dir(System *s, int *cap_, const char *dir, int game_dirs) {
+    int cap = *cap_;
+    DirEnt *ents;
+    int n = list_dir(dir, &ents);
+    if (n <= 0) {
+        free(ents);
+        return;
+    }
+
+    ArtEnt *arts = NULL;
+    int na = 0, acap = 0;
+    add_art(&arts, &na, &acap, dir, ents, n);
+    const char *artdirs[] = {"media", "boxart", "images", "covers"};
+    for (int i = 0; i < n; i++) {
+        if (!ents[i].dir) continue;
+        for (int k = 0; k < 4; k++) {
+            if (strcasecmp(ents[i].name, artdirs[k])) continue;
+            char sub[1100];
+            snprintf(sub, sizeof(sub), "%s/%s", dir, ents[i].name);
+            DirEnt *se;
+            int sn = list_dir(sub, &se);
+            if (sn > 0) add_art(&arts, &na, &acap, sub, se, sn);
+            free(se);
+        }
+    }
+
+    int has_m3u = 0;
+    for (int i = 0; i < n; i++)
+        if (!ents[i].dir && !strcasecmp(ext_of(ents[i].name), "m3u") && has_ext(s, ents[i].name)) has_m3u = 1;
+
+    for (int i = 0; i < n; i++) {
+        if (ents[i].dir || !has_ext(s, ents[i].name)) continue;
+        char stem[256], title[160], full[1300];
+        stem_of(ents[i].name, stem, sizeof(stem));
+        const char *ext = ext_of(ents[i].name);
+        if (!strcasecmp(ext, "cue")) {
+            char chd[300];
+            snprintf(chd, sizeof(chd), "%s.chd", stem);
+            int dup = 0;
+            for (int j = 0; j < n; j++) if (!strcasecmp(ents[j].name, chd)) dup = 1;
+            if (dup) continue;
+        }
+        int disc = disc_number(stem);
+        if (has_m3u && strcasecmp(ext, "m3u") && disc > 0) continue;
+        if (disc > 1) continue;
+        pretty_name(stem, title, sizeof(title));
+        snprintf(full, sizeof(full), "%s/%s", dir, ents[i].name);
+        push_game(s, &cap, title, full, dir, find_art(arts, na, stem));
+    }
+
+    if (game_dirs) scan_game_folders(s, &cap, dir, 0, 0);
+    if (s->folder_games) {
+        for (int i = 0; i < n; i++) {
+            if (!ents[i].dir) continue;
+            int skip = 0;
+            for (int k = 0; k < 4; k++) if (!strcasecmp(ents[i].name, artdirs[k])) skip = 1;
+            if (skip) continue;
+            char title[160], full[1300];
+            pretty_name(ents[i].name, title, sizeof(title));
+            snprintf(full, sizeof(full), "%s/%s", dir, ents[i].name);
+            push_game(s, &cap, title, full, dir, find_art(arts, na, ents[i].name));
+        }
+    }
+    free(arts);
+    free(ents);
+    *cap_ = cap;
+}
+
 static void scan_system(System *s) {
     int cap = 0;
     s->games = NULL;
@@ -1738,71 +1856,33 @@ static void scan_system(System *s) {
 
             char dir[1024];
             snprintf(dir, sizeof(dir), "%s/%s", g_roots[r], top[t].name);
-            DirEnt *ents;
-            int n = list_dir(dir, &ents);
-            if (n <= 0) {
-                free(ents);
-                continue;
-            }
-
-            ArtEnt *arts = NULL;
-            int na = 0, acap = 0;
-            add_art(&arts, &na, &acap, dir, ents, n);
-            const char *artdirs[] = {"media", "boxart", "images", "covers"};
-            for (int i = 0; i < n; i++) {
-                if (!ents[i].dir) continue;
-                for (int k = 0; k < 4; k++) {
-                    if (strcasecmp(ents[i].name, artdirs[k])) continue;
-                    char sub[1100];
-                    snprintf(sub, sizeof(sub), "%s/%s", dir, ents[i].name);
-                    DirEnt *se;
-                    int sn = list_dir(sub, &se);
-                    if (sn > 0) add_art(&arts, &na, &acap, sub, se, sn);
-                    free(se);
-                }
-            }
-
-            int has_m3u = 0;
-            for (int i = 0; i < n; i++)
-                if (!ents[i].dir && !strcasecmp(ext_of(ents[i].name), "m3u") && has_ext(s, ents[i].name)) has_m3u = 1;
-
-            for (int i = 0; i < n; i++) {
-                if (ents[i].dir || !has_ext(s, ents[i].name)) continue;
-                char stem[256], title[160], full[1300];
-                stem_of(ents[i].name, stem, sizeof(stem));
-                const char *ext = ext_of(ents[i].name);
-                if (!strcasecmp(ext, "cue")) {
-                    char chd[300];
-                    snprintf(chd, sizeof(chd), "%s.chd", stem);
-                    int dup = 0;
-                    for (int j = 0; j < n; j++) if (!strcasecmp(ents[j].name, chd)) dup = 1;
-                    if (dup) continue;
-                }
-                int disc = disc_number(stem);
-                if (has_m3u && strcasecmp(ext, "m3u") && disc > 0) continue;
-                if (disc > 1) continue;
-                pretty_name(stem, title, sizeof(title));
-                snprintf(full, sizeof(full), "%s/%s", dir, ents[i].name);
-                push_game(s, &cap, title, full, dir, find_art(arts, na, stem));
-            }
-
-            if (game_dirs) scan_game_folders(s, &cap, dir, 0, 0);
-            if (s->folder_games) {
-                for (int i = 0; i < n; i++) {
-                    if (!ents[i].dir) continue;
-                    int skip = 0;
-                    for (int k = 0; k < 4; k++) if (!strcasecmp(ents[i].name, artdirs[k])) skip = 1;
-                    if (skip) continue;
-                    char title[160], full[1300];
-                    pretty_name(ents[i].name, title, sizeof(title));
-                    snprintf(full, sizeof(full), "%s/%s", dir, ents[i].name);
-                    push_game(s, &cap, title, full, dir, find_art(arts, na, ents[i].name));
-                }
-            }
-            free(arts);
-            free(ents);
+            scan_rom_dir(s, &cap, dir, game_dirs);
         }
         free(top);
+    }
+    /* the emulators' own games folders, and one level of folders in them (a game in a folder of
+     * its own); "games" inside a drive's emulator folder is listed on its own */
+    {
+        static char dirs[64][256];
+        static const char *not_games[] = {"games", "bios", "cache", "saves", "states", "memcards", "cheats",
+                                          "logs", "config", "textures", "covers", "media", "boxart", "images", 0};
+        int nd = emu_game_dirs(s->id, dirs, 64);
+        for (int d = 0; d < nd; d++) {
+            scan_rom_dir(s, &cap, dirs[d], game_dirs);
+            if (s->folder_games) continue;
+            DirEnt *sub;
+            int ns = list_dir(dirs[d], &sub);
+            for (int i = 0; i < ns; i++) {
+                if (!sub[i].dir) continue;
+                int skip = 0;
+                for (int k = 0; not_games[k]; k++) if (!strcasecmp(sub[i].name, not_games[k])) skip = 1;
+                if (skip) continue;
+                char dir[1024];
+                snprintf(dir, sizeof(dir), "%s/%s", dirs[d], sub[i].name);
+                scan_rom_dir(s, &cap, dir, game_dirs);
+            }
+            free(sub);
+        }
     }
     group_updates(s);
     if (s->ngames > 1) qsort(s->games, (size_t)s->ngames, sizeof(Game), game_cmp);
@@ -2054,6 +2134,8 @@ typedef struct {
     char argv_list[MAX_LIST][1400]; int nargv;   /* unescaped, for the native helper */
     char request_path[700]; /* PS5 RetroArch: game-request.txt to write first */
     char request[3000];
+    char write_path[300];   /* a request file jc-launch.elf writes first (PS5SX2's disc-launch.txt) */
+    char write_text[1400];
 } LaunchCmd;
 
 static int build_launch(Game *g, LaunchCmd *lc) {
@@ -2113,6 +2195,18 @@ static int build_launch(Game *g, LaunchCmd *lc) {
             strncat(lc->pretty, a, sizeof(lc->pretty) - strlen(lc->pretty) - 1);
         }
     }
+    if (e->is_title && e->req_file[0]) {
+        fill_tokens(e->req_file, lc->write_path, sizeof(lc->write_path), g->path, e->dir, s->core_path, g->dir);
+        fill_tokens(e->req_text, lc->write_text, sizeof(lc->write_text), g->path, e->dir, s->core_path, g->dir);
+        size_t pl = strlen(lc->pretty);
+        snprintf(lc->pretty + pl, sizeof(lc->pretty) - pl, "\n  request: %s\n    %s", lc->write_path, lc->write_text);
+    }
+    if (!strcmp(e->id, "swanstation_app") && !in_swanstation_library(g->path)) {
+        size_t pl = strlen(lc->pretty);
+        snprintf(lc->pretty + pl, sizeof(lc->pretty) - pl,
+                 "\n  (SwanStationPS5 starts only games in its own folders, such as\n"
+                 "  /data/PSXS5/games: for this one it opens its shelf)");
+    }
     for (int i = 0; i < e->nenv; i++) {
         char v[700], kv[800];
         fill_tokens(e->envv[i], v, sizeof(v), g->path, e->dir, s->core_path, g->dir);
@@ -2163,6 +2257,10 @@ static int launch_title_native(LaunchCmd *lc) {
     if (lc->request_path[0] && write_file(lc->request_path, lc->request) != 0) return -4;
     static char req[24000];
     snprintf(req, sizeof(req), "jewelcase-launch 1\ntitle=%s\n", lc->target);
+    if (lc->write_path[0]) {
+        size_t l = strlen(req);
+        snprintf(req + l, sizeof(req) - l, "write=%s\t%s\n", lc->write_path, lc->write_text);
+    }
     for (int i = 0; i < lc->nargv; i++) {
         strncat(req, "arg=", sizeof(req) - strlen(req) - 1);
         strncat(req, lc->argv_list[i], sizeof(req) - strlen(req) - 1);
@@ -6527,6 +6625,16 @@ static int scan_with_helper(SDL_Window *win) {
         char line[340];
         snprintf(line, sizeof(line), "2\t%s\n", g_pe_roms);   /* its games, and their own folders */
         strncat(req, line, sizeof(req) - strlen(req) - 1);
+    }
+    {
+        /* the emulators' own games folders (see emu_game_dirs) */
+        static char dirs[64][256];
+        int nd = emu_game_dirs("", dirs, 64);
+        for (int d = 0; d < nd; d++) {
+            char line[300];
+            snprintf(line, sizeof(line), "2\t%s\n", dirs[d]);
+            strncat(req, line, sizeof(req) - strlen(req) - 1);
+        }
     }
     for (int r = 0; r < g_nroots; r++) {
         int inside = 0;

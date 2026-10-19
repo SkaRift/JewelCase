@@ -9,6 +9,11 @@
  *   jewelcase-launch 1
  *   title=PPSA99169
  *   arg=--ps5-mode=game        (zero or more)
+ *   write=<path>\t<line>       (zero or more) a file to write before the app
+ *                              starts: PS5SX2 starts the game named in
+ *                              /data/PCSX2/logs/disc-launch.txt. Its folder is
+ *                              made if missing. Removed again if the app
+ *                              doesn't start, so it can't start a game later.
  *
  * How the app is started:
  *   1. sceLncUtilLaunchApp, the call the home screen makes when a tile is
@@ -27,10 +32,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define REQUEST_PATH "/data/jewelcase-launch.txt"
 #define MAX_ARGS 32
+#define MAX_WRITES 4
 
 typedef struct notify_request {
   char useless1[45];
@@ -118,6 +125,53 @@ wait_started(const char *title, int ms) {
 }
 
 
+/* make `path`'s folder and its parents */
+static void
+make_parents(const char *path) {
+  char d[1024];
+  snprintf(d, sizeof d, "%s", path);
+  char *slash = strrchr(d, '/');
+  if(!slash || slash == d) {
+    return;
+  }
+  *slash = 0;
+  for(char *p = d + 1; *p; p++) {
+    if(*p == '/') {
+      *p = 0;
+      mkdir(d, 0777);
+      *p = '/';
+    }
+  }
+  mkdir(d, 0777);
+}
+
+
+/* write `text` and a newline to `path` (through a temporary file, so the app
+ * never reads half of it); 0 on success */
+static int
+write_request(const char *path, const char *text) {
+  char tmp[1100];
+  FILE *f;
+
+  make_parents(path);
+  snprintf(tmp, sizeof tmp, "%s.tmp", path);
+  if(!(f=fopen(tmp, "w"))) {
+    return -1;
+  }
+  fprintf(f, "%s\n", text);
+  if(fclose(f)) {
+    unlink(tmp);
+    return -1;
+  }
+  if(rename(tmp, path)) {
+    unlink(tmp);
+    return -1;
+  }
+  chmod(path, 0666);
+  return 0;
+}
+
+
 int
 main(void) {
   char title[32] = "";
@@ -130,6 +184,8 @@ main(void) {
   FILE *f;
   int app_id;
   int err, err_lnc;
+  char *wpath[MAX_WRITES], *wtext[MAX_WRITES];
+  int nw = 0, written = 0;
 
   if(!(f=fopen(REQUEST_PATH, "r"))) {
     notify("Jewel Case: no launch request");
@@ -149,6 +205,14 @@ main(void) {
       snprintf(title, sizeof title, "%s", line + 6);
     } else if(!strncmp(line, "arg=", 4) && argc < MAX_ARGS) {
       argv[argc++] = strdup(line + 4);
+    } else if(!strncmp(line, "write=", 6) && nw < MAX_WRITES) {
+      char *tab = strchr(line + 6, '\t');
+      if(tab && line[6] == '/') {
+        *tab = 0;
+        wpath[nw] = strdup(line + 6);
+        wtext[nw] = strdup(tab + 1);
+        nw++;
+      }
     }
   }
   argv[argc] = 0;
@@ -158,6 +222,15 @@ main(void) {
   if(!title[0]) {
     notify("Jewel Case: launch request has no title");
     return 1;
+  }
+
+  /* the app's own request files (the app only opens without them) */
+  for(int i=0; i<nw; i++) {
+    if(write_request(wpath[i], wtext[i])) {
+      notify("Jewel Case: couldn't write %s; the app opens without the game", wpath[i]);
+    } else {
+      written |= 1 << i;
+    }
   }
 
   sceUserServiceInitialize(0);
@@ -201,5 +274,12 @@ main(void) {
 
   notify("Jewel Case: couldn't start %s (0x%x / 0x%x)", title,
 	 (unsigned)err_lnc, (unsigned)err);
+  /* it didn't start: don't leave a request that would start the game the
+   * next time the app is opened */
+  for(int i=0; i<nw; i++) {
+    if(written & (1 << i)) {
+      unlink(wpath[i]);
+    }
+  }
   return 1;
 }
