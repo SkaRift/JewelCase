@@ -71,15 +71,19 @@ its own in its roms folder, the update and DLC files beside it (any names):
 
 The game files folder is the one picked in ProsperoEden's Settings > Game
 files (/data/prosperoeden if you never picked one). Jewel Case reads that
-setting and lists the Switch games there too, so keep your Switch games
-in that one place and both apps use the same files: one copy of each.
-Everything in a game's folder is shown as that one game.
+setting and lists the Switch games there too. Everything in a game's
+folder is shown as that one game.
+
+Update files next to a game anywhere else (such as /data/roms/switch) are
+shown as part of that game too, even with a hash for a name: Jewel Case
+reads the title ID inside each .nsp / .nsz.
 
 The details screen says:
-  green "Update 1.1, 1 DLC - applied when the game starts"   all set
-  amber "Update 1.1 - not applied"   the files aren't in ProsperoEden's
-        folder (for example in /data/roms/switch). Move the game and its
-        files into a folder of their own there, then Settings > Rescan games.
+  amber "Update available"   ProsperoEden doesn't see the file yet. Press
+        Square for File info, then Cross: Update. Jewel Case moves it into
+        ProsperoEden's updates folder (named after the game), where it's
+        applied every time the game starts. Still one copy.
+  green "Updated"   all set; nothing more to do.
 
 Other emulators (Wii U in Cemu, older ProsperoEden): Jewel Case starts
 games; it doesn't install anything into an emulator. Keep the update and

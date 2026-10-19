@@ -423,6 +423,18 @@ static int ix_type(const char *path) {
 }
 
 /* Parses an index; takes ownership of buf. Returns entries, or -1 if incomplete. */
+/* What each Switch file holds, from its own table of contents (jc-scan.elf reads it on the
+ * console; the PC build reads it here): its title ID, G game / U update / D DLC, its version */
+typedef struct {
+    char *path;
+    unsigned long long tid;
+    char kind;
+    char ver[16];
+} SwMeta;
+static SwMeta *g_sw;
+static int g_nsw;
+static char g_pe_base[300];   /* ProsperoEden's game files folder, as jc-scan.elf found it */
+
 static int ix_load(char *buf) {
     if (strncmp(buf, "jewelcase-index 1\n", strlen("jewelcase-index 1\n"))) return -1;
     size_t len = strlen(buf);
@@ -433,11 +445,15 @@ static int ix_load(char *buf) {
         free(g_ix_buf);
         g_ix_buf = NULL;
     }
+    free(g_sw);
+    g_sw = NULL;
+    g_nsw = 0;
     int lines = 0;
     for (char *c = buf; *c; c++) if (*c == '\n') lines++;
     g_ix_path = xcalloc((size_t)lines + 1, sizeof(char *));
     g_ix_titles = xcalloc((size_t)lines + 1, sizeof(IxTitle));
     g_ix_n = g_ix_ntitles = 0;
+    g_sw = xcalloc((size_t)lines + 1, sizeof(SwMeta));
     char *save = NULL;
     for (char *ln = strtok_r(buf, "\n", &save); ln; ln = strtok_r(NULL, "\n", &save)) {
         if ((ln[0] == 'D' || ln[0] == 'F') && ln[1] == '\t') {
@@ -450,6 +466,26 @@ static int ix_load(char *buf) {
             if (!c) continue;
             *c++ = 0;
             g_ix_titles[g_ix_ntitles++] = (IxTitle){a, b, c};
+        } else if (ln[0] == 'S' && ln[1] == '\t') {
+            /* S <path> <title ID> <kind> <version> */
+            char *f[4] = {ln + 2, NULL, NULL, NULL};
+            int ok = 1;
+            for (int k = 1; k < 4 && ok; k++) {
+                char *t = strchr(f[k - 1], '\t');
+                if (!t) ok = 0;
+                else {
+                    *t = 0;
+                    f[k] = t + 1;
+                }
+            }
+            if (!ok) continue;
+            SwMeta *m = &g_sw[g_nsw++];
+            m->path = f[0];
+            m->tid = strtoull(f[1], NULL, 16);
+            m->kind = f[2][0];
+            snprintf(m->ver, sizeof(m->ver), "%s", strcmp(f[3], "-") ? f[3] : "");
+        } else if (ln[0] == 'P' && ln[1] == '\t') {
+            snprintf(g_pe_base, sizeof(g_pe_base), "%s", ln + 2);
         }
     }
     qsort(g_ix_path, (size_t)g_ix_n, sizeof(char *), ix_cmp);
@@ -562,8 +598,12 @@ typedef struct Game {
     char ver[32];               /* its version, from the file name ("1.0", "v131072"), or "" */
     char upd[32];               /* the newest update file next to it: its version, or "yes" */
     int nupd, ndlc;             /* update and DLC files grouped under it */
-    char grouped[700];          /* their file names, one per line */
+    char grouped[2400];         /* their full paths, one per line */
     int nother;                 /* other files in its own game folder (update or DLC, unnamed) */
+    int nunapplied;             /* of those, how many ProsperoEden won't see where they are */
+    unsigned long long tid;     /* Switch: the title ID the file holds, 0 unknown */
+    char mkind;                 /* Switch: what the file holds: 'G', 'U', 'D', 0 unknown */
+    char mver[16];              /* Switch: its version number, from the file, "" unknown */
     char in_pe;                 /* in ProsperoEden's game files folder, where it applies updates */
     char own_dir;               /* in a folder of its own (with its update and DLC) */
 } Game;
@@ -595,6 +635,7 @@ static int g_nroots;
  * only from there (each game in a folder of its own, its update and DLC beside it), so Jewel
  * Case lists Switch games from it too. "" none. */
 static char g_pe_roms[300];
+static char g_pe_updates[300];   /* <game files folder>/updates: applied to any game, by title ID */
 
 static char *read_file(const char *path, size_t *len);
 
@@ -611,7 +652,86 @@ static void find_pe_roms(void) {
     size_t l = strlen(base);
     while (l > 1 && base[l - 1] == '/') base[--l] = 0;
     snprintf(g_pe_roms, sizeof(g_pe_roms), "%s/roms", base);
+    snprintf(g_pe_updates, sizeof(g_pe_updates), "%s/updates", base);
 }
+
+/* jc-scan.elf read ProsperoEden's settings from outside the sandbox: use what it found */
+static void pe_from_index(void) {
+    if (!g_pe_base[0]) return;
+    snprintf(g_pe_roms, sizeof(g_pe_roms), "%s/roms", g_pe_base);
+    snprintf(g_pe_updates, sizeof(g_pe_updates), "%s/updates", g_pe_base);
+}
+/* what a Switch .nsp holds (see jc-scan.c): 0 = couldn't tell */
+static int nsp_read(const char *path, unsigned long long *tid, char *kind, char *ver, size_t vcap) {
+    char rp[1100];
+    real_path(path, rp, sizeof(rp));
+    FILE *f = fopen(rp, "rb");
+    if (!f) return 0;
+    static unsigned char h[256 * 1024];
+    size_t got = fread(h, 1, sizeof(h), f);
+    *tid = 0;
+    *kind = 0;
+    ver[0] = 0;
+    if (got < 16 || memcmp(h, "PFS0", 4)) {
+        fclose(f);
+        return 0;
+    }
+    unsigned n = h[4] | h[5] << 8 | h[6] << 16 | (unsigned)h[7] << 24;
+    unsigned strsz = h[8] | h[9] << 8 | h[10] << 16 | (unsigned)h[11] << 24;
+    size_t table = 16 + (size_t)n * 24, data = table + strsz;
+    if (!n || n > 4000 || data > got) {
+        fclose(f);
+        return 0;
+    }
+    for (unsigned i = 0; i < n; i++) {
+        const unsigned char *e = h + 16 + (size_t)i * 24;
+        unsigned no = e[16] | e[17] << 8 | e[18] << 16 | (unsigned)e[19] << 24;
+        if (no >= strsz) continue;
+        const char *name = (const char *)h + table + no;
+        size_t l = strnlen(name, strsz - no);
+        if (l == 36 && !strcmp(name + 32, ".tik") && !*tid) {
+            char hx[17];
+            memcpy(hx, name, 16);
+            hx[16] = 0;
+            *tid = strtoull(hx, NULL, 16);
+        } else if (l > 9 && !strcmp(name + l - 9, ".cnmt.xml")) {
+            unsigned long long off = 0, sz = 0;
+            for (int b = 7; b >= 0; b--) off = (off << 8) | e[b];
+            for (int b = 7; b >= 0; b--) sz = (sz << 8) | e[8 + b];
+            static char xml[64 * 1024 + 1];
+            if (sz && sz < 64 * 1024 && fseek(f, (long)(data + off), SEEK_SET) == 0) {
+                size_t k = fread(xml, 1, (size_t)sz, f);
+                xml[k] = 0;
+                const char *t = strstr(xml, "<Type>");
+                if (t) *kind = !strncmp(t + 6, "Patch", 5) ? 'U' : !strncmp(t + 6, "AddOnContent", 12) ? 'D' : 'G';
+                const char *id = strstr(xml, "<Id>");
+                if (id) *tid = strtoull(id + 4, NULL, 16);
+                const char *v = strstr(xml, "<Version>");
+                if (v) snprintf(ver, vcap, "%ld", strtol(v + 9, NULL, 10));
+            }
+        }
+    }
+    fclose(f);
+    if (!*tid) return 0;
+    if (!*kind) *kind = (*tid & 0xfff) == 0x800 ? 'U' : (*tid & 0xfff) ? 'D' : 'G';
+    return 1;
+}
+
+/* the facts for one file: from the index on the console, else read here */
+static int sw_meta(const char *path, unsigned long long *tid, char *kind, char *ver, size_t vcap) {
+    if (g_ix_on) {
+        for (int i = 0; i < g_nsw; i++)
+            if (!strcmp(g_sw[i].path, path)) {
+                *tid = g_sw[i].tid;
+                *kind = g_sw[i].kind;
+                snprintf(ver, vcap, "%s", g_sw[i].ver);
+                return 1;
+            }
+        return 0;
+    }
+    return nsp_read(path, tid, kind, ver, vcap);
+}
+
 static int g_hide_empty = 1;
 static char g_rom_folder[64] = "/data/roms";   /* where Create system folders makes them */
 
@@ -1421,17 +1541,35 @@ static void push_game(System *s, int *cap, const char *title, const char *path, 
 
 /* update and DLC files go under their game instead of showing as games of their own
  * (kept as games when there's no game for them) */
+/* what a file is: 0 a game, 1 an update, 2 DLC; from the file itself when known, else its name */
+static int gkind(const Game *g) {
+    if (g->mkind) return g->mkind == 'U' ? 1 : g->mkind == 'D' ? 2 : 0;
+    return name_kind(g->stem);
+}
+static unsigned long long gtid(const Game *g) { return g->tid ? g->tid : switch_tid(g->stem); }
+
+/* ProsperoEden applies an update or DLC file from its updates folder, or from a game's own
+ * folder in its roms folder (not from the roms folder itself) */
+static int addon_applied(const Game *u) {
+    size_t lu = strlen(g_pe_updates), lr = strlen(g_pe_roms);
+    if (lu && !strncmp(u->path, g_pe_updates, lu) && u->path[lu] == '/') return 1;
+    if (lr && !strncmp(u->path, g_pe_roms, lr) && u->path[lr] == '/' && strchr(u->path + lr + 1, '/')) return 1;
+    return 0;
+}
+
 static void add_grouped(Game *b, const Game *u, int kind) {
-    const char *un = strrchr(u->path, '/');
-    un = un ? un + 1 : u->path;
-    if (strlen(b->grouped) + strlen(un) + 2 < sizeof(b->grouped)) {
-        strcat(b->grouped, un);
+    if (strlen(b->grouped) + strlen(u->path) + 2 < sizeof(b->grouped)) {
+        strcat(b->grouped, u->path);
         strcat(b->grouped, "\n");
     }
+    if (!addon_applied(u)) b->nunapplied++;
+    char v[40] = "";
+    if (u->ver[0]) scopy(v, sizeof(v), u->ver);
+    else if (u->mver[0] && strcmp(u->mver, "0")) snprintf(v, sizeof(v), "v%s", u->mver);
     if (kind == 1) {
         b->nupd++;
-        if (!b->upd[0] || !strcmp(b->upd, "yes") || (u->ver[0] && version_newer(u->ver, b->upd)))
-            scopy(b->upd, sizeof(b->upd), u->ver[0] ? u->ver : "yes");
+        if (!b->upd[0] || !strcmp(b->upd, "yes") || (v[0] && version_newer(v, b->upd)))
+            scopy(b->upd, sizeof(b->upd), v[0] ? v : "yes");
     } else if (kind == 2) {
         b->ndlc++;
     } else {
@@ -1439,67 +1577,94 @@ static void add_grouped(Game *b, const Game *u, int kind) {
     }
 }
 
+/* update and DLC files go under their game instead of showing as games of their own (kept
+ * as games when there's no game for them). Matched by the title ID they hold (read from the
+ * file: names can be anything, even a string of hex digits), then by sharing a game's own
+ * folder, then by name. */
 static void group_updates(System *s) {
+    int sw = !strcmp(s->id, "switch");
     for (int i = 0; i < s->ngames; i++) {
         Game *g = &s->games[i];
+        if (sw) sw_meta(g->path, &g->tid, &g->mkind, g->mver, sizeof(g->mver));
         name_version(g->stem, g->ver, sizeof(g->ver));
-        if (name_kind(g->stem) == 0) drop_version_words(g->title);
+        if (gkind(g) == 0) drop_version_words(g->title);
     }
-    /* a game in a folder of its own: everything else in that folder is its update or DLC
-     * (ProsperoEden tells which by what the files hold, so their names can be anything) */
-    for (int i = 0; i < s->ngames; i++) {
-        if (!s->games[i].own_dir) continue;
+    int n = s->ngames;
+    if (n < 2) return;
+    int *owner = calloc((size_t)n, sizeof(int));
+    if (!owner) return;
+    for (int i = 0; i < n; i++) owner[i] = -1;
+    /* 1. by title ID */
+    for (int i = 0; i < n; i++) {
+        Game *u = &s->games[i];
+        int kind = gkind(u);
+        unsigned long long tid = gtid(u);
+        if (!kind || !tid) continue;
+        unsigned long long want = kind == 1 ? (tid & ~0xfffULL) : ((tid - 0x1000) & ~0xfffULL);
+        int base = -1, lone = -1, nlone = 0;
+        for (int j = 0; j < n; j++) {
+            if (j == i || gkind(&s->games[j])) continue;
+            unsigned long long gt = gtid(&s->games[j]);
+            if (gt == want) base = j;
+            /* a game that doesn't say which it is, in the same folder: the only candidate? */
+            if (!gt && !strcmp(s->games[j].dir, u->dir)) {
+                lone = j;
+                nlone++;
+            }
+        }
+        if (base < 0 && nlone == 1) base = lone;
+        if (base >= 0) owner[i] = base;
+    }
+    /* 2. a game's own folder: everything else in it belongs to it */
+    for (int i = 0; i < n; i++) {
+        Game *u = &s->games[i];
+        if (owner[i] >= 0 || !u->own_dir) continue;
         int base = -1;
-        for (int j = 0; j < s->ngames; j++) {
+        for (int j = 0; j < n; j++) {
             Game *c = &s->games[j];
-            if (!c->own_dir || strcmp(c->dir, s->games[i].dir) || name_kind(c->stem)) continue;
-            /* the game itself: a base title ID, else the shortest name */
-            if (base < 0 || (switch_tid(c->stem) && !switch_tid(s->games[base].stem)) ||
-                (!switch_tid(s->games[base].stem) && strlen(c->stem) < strlen(s->games[base].stem)))
+            if (owner[j] >= 0 || !c->own_dir || strcmp(c->dir, u->dir) || gkind(c)) continue;
+            /* the game itself: one that says it's a game, else the shortest name */
+            if (base < 0 || (c->mkind == 'G' && s->games[base].mkind != 'G') ||
+                (c->mkind == s->games[base].mkind && strlen(c->stem) < strlen(s->games[base].stem)))
                 base = j;
         }
-        if (base < 0 || base != i) continue;
-        for (int j = 0; j < s->ngames;) {
-            Game *u = &s->games[j];
-            if (j == base || !u->own_dir || strcmp(u->dir, s->games[base].dir)) {
-                j++;
-                continue;
-            }
-            add_grouped(&s->games[base], u, name_kind(u->stem));
-            memmove(u, u + 1, sizeof(Game) * (size_t)(s->ngames - j - 1));
-            s->ngames--;
-            if (j < base) base--;
-        }
-        i = base;
+        if (base >= 0 && base != i) owner[i] = base;
     }
-    for (int i = 0; i < s->ngames;) {
+    /* 3. by name ("<game> 1.1 update") */
+    for (int i = 0; i < n; i++) {
         Game *u = &s->games[i];
-        int kind = name_kind(u->stem);
-        int base = -1;
-        if (kind) {
-            unsigned long long tid = switch_tid(u->stem), want = 0;
-            if (tid) want = kind == 1 ? (tid & ~0xfffULL) : ((tid - 0x1000) & ~0xfffULL);
-            char ku[256], kg[256];
-            base_key(u->stem, ku, sizeof(ku));
-            for (int j = 0; j < s->ngames && base < 0; j++) {
-                if (j == i || name_kind(s->games[j].stem)) continue;
-                unsigned long long gt = switch_tid(s->games[j].stem);
-                if (want && gt) {
-                    if (gt == want) base = j;
-                    continue;
-                }
-                base_key(s->games[j].stem, kg, sizeof(kg));
-                if (ku[0] && !strcmp(ku, kg)) base = j;
+        int kind = gkind(u);
+        if (owner[i] >= 0 || !kind) continue;
+        char ku[256], kg[256];
+        base_key(u->stem, ku, sizeof(ku));
+        if (!ku[0]) continue;
+        for (int j = 0; j < n; j++) {
+            if (j == i || owner[j] >= 0 || gkind(&s->games[j])) continue;
+            base_key(s->games[j].stem, kg, sizeof(kg));
+            if (!strcmp(ku, kg)) {
+                owner[i] = j;
+                break;
             }
         }
-        if (base < 0) {
-            i++;
-            continue;
-        }
-        add_grouped(&s->games[base], u, kind);
-        memmove(u, u + 1, sizeof(Game) * (size_t)(s->ngames - i - 1));
-        s->ngames--;
     }
+    /* attach, then drop the attached ones from the list */
+    for (int i = 0; i < n; i++)
+        if (owner[i] >= 0) {
+            int b = owner[i];
+            while (owner[b] >= 0) b = owner[b];   /* (an owner that was itself attached) */
+            add_grouped(&s->games[b], &s->games[i], gkind(&s->games[i]));
+        }
+    int w = 0;
+    size_t lu = strlen(g_pe_updates);
+    for (int i = 0; i < n; i++)
+        if (owner[i] < 0) {
+            /* ProsperoEden's updates folder holds every game's: only show them with their game */
+            if (lu && !strncmp(s->games[i].path, g_pe_updates, lu) && s->games[i].path[lu] == '/') continue;
+            if (w != i) s->games[w] = s->games[i];
+            w++;
+        }
+    s->ngames = w;
+    free(owner);
 }
 
 /* Switch games one folder deep: <dir>/<Game>/<game>.nsp with its update and DLC beside it
@@ -1557,6 +1722,7 @@ static void scan_system(System *s) {
     int game_dirs = !strcmp(s->id, "switch");
     /* ProsperoEden's own folder first: a game there gets its update and DLC applied */
     if (game_dirs && g_pe_roms[0]) scan_game_folders(s, &cap, g_pe_roms, 1, 1);
+    if (game_dirs && g_pe_updates[0]) scan_game_folders(s, &cap, g_pe_updates, 1, 1);
     for (int r = 0; r < g_nroots; r++) {
         DirEnt *top;
         int nt = list_dir(g_roots[r], &top);
@@ -1792,15 +1958,16 @@ static int uses_pe(const Game *g) {
  * isn't in its game files folder) */
 static int upd_state(const Game *g, char *text, size_t cap) {
     if (uses_pe(g) && (g->nupd || g->ndlc || g->nother)) {
-        int n = 0;
+        /* ProsperoEden applies them by itself, once they're where it looks */
+        int done = g->nunapplied == 0, n = 0;
+        int ver = g->nupd && strcmp(g->upd, "yes");
         if (g->nupd)
-            n += snprintf(text + n, cap - n, "Update%s%s", strcmp(g->upd, "yes") ? " " : "", strcmp(g->upd, "yes") ? g->upd : "");
-        if (g->ndlc && n < (int)cap) n += snprintf(text + n, cap - n, "%s%d DLC", n ? ", " : "", g->ndlc);
+            n += snprintf(text + n, cap - n, done ? (ver ? "Updated to %s" : "Updated%s") : (ver ? "Update %s available" : "Update available%s"),
+                          ver ? g->upd : "");
+        if (g->ndlc && n < (int)cap) n += snprintf(text + n, cap - n, "%s%d DLC%s", n ? "  \xc2\xb7  " : "", g->ndlc, done || g->nupd ? "" : " available");
         if (g->nother && n < (int)cap)
-            n += snprintf(text + n, cap - n, "%s%d update / DLC file%s", n ? ", " : "", g->nother, g->nother == 1 ? "" : "s");
-        if (n < (int)cap)
-            snprintf(text + n, cap - n, "%s", g->in_pe ? "  \xc2\xb7  applied when the game starts" : "  \xc2\xb7  not applied");
-        return g->in_pe ? 3 : 4;
+            snprintf(text + n, cap - n, "%s%d more file%s", n ? "  \xc2\xb7  " : "", g->nother, g->nother == 1 ? "" : "s");
+        return done ? 3 : 4;
     }
     const char *ru;
     int rd;
@@ -4176,7 +4343,7 @@ static void draw_info(void) {
     char ustate[160];
     int ust0 = upd_state(g, ustate, sizeof(ustate));
     int todo = ust0 == 1 || ust0 == 4;
-    const char *ulabel = ust0 == 4                ? "Update / DLC not applied"
+    const char *ulabel = ust0 == 4                ? (g->nupd ? "Update available" : "DLC available")
                          : g->nupd && g->ndlc     ? "Update / DLC not installed"
                          : g->nupd                ? "Update not installed"
                                                   : "DLC not installed";
@@ -4881,11 +5048,10 @@ static void draw_details(Uint32 accent) {
     y = cyy + 52;
     if (ust == 4) {
         /* ProsperoEden only applies them from its own game files folder */
-        char how[300];
-        snprintf(how, sizeof(how), "ProsperoEden applies updates and DLC only from %s.", g_pe_roms[0] ? g_pe_roms : "its roms folder");
+        const char *how = "Update it in File info";
         draw_text(&F_small, x + 4, y - 6, how, UPD_TODO, a);
-        draw_text(&F_small, x + 4, y - 6 + 36, "Move this game and its files into a folder of their own there.", UPD_TODO, a);
-        y += 80;
+        draw_button((int)(x + 4 + text_width(&F_small, how) + 30), (int)(y - 6 + F_small.line / 2.0f), 's');
+        y += 44;
     } else if (ust == 1) {
         /* what to do about it, in so many words */
         char how[200];
@@ -5404,6 +5570,7 @@ static int g_auto_covers = 1;
  * roms folder on every drive either way. */
 
 /* folders for jc-scan.elf to create before it lists ("M<TAB>path" lines) */
+static char g_scan_moves[8192];   /* V lines for the scanner: files to move first */
 static char g_scan_mkdirs[16384];
 
 static const char *const DRIVES[][2] = {
@@ -5494,6 +5661,30 @@ static void busy_frame(const char *text) {
     present(g_win);
 }
 
+static void scan_everything(void);
+static void rebuild_tabs(void);
+static void rescan_now(const char *msg) {
+    /* keep the same game selected when it's still there */
+    char keep[1024] = "";
+    Game *cur = entry_count() > 0 ? entry_game(g_sel_game) : NULL;
+    if (cur) scopy(keep, sizeof(keep), cur->path);
+    busy_frame(msg);
+    scan_everything();
+    g_scan_moves[0] = 0;
+    load_recent();
+    load_favs();
+    load_installed();
+    rebuild_tabs();
+    if (keep[0])
+        for (int i = 0; i < entry_count(); i++)
+            if (entry_game(i) && !strcmp(entry_game(i)->path, keep)) {
+                g_sel_game = i;
+                g_pos = (float)i;
+                break;
+            }
+    if (g_auto_covers) start_cover_helper();
+}
+
 #if defined(GS_NATIVE) || defined(GS_HOST)
 static int scan_with_helper(SDL_Window *win);
 #endif
@@ -5514,6 +5705,7 @@ static void scan_everything(void) {
     g_scan_failed = 0;
     if (g_use_scanner) {
         if (scan_with_helper(g_win) != 0) g_scan_failed = 1;
+        else pe_from_index();
         logf_("folder list: %s", g_scan_status);
     }
 #endif
@@ -5832,16 +6024,10 @@ static void settings_activate(void) {
     g_set_confirm = -1;
     switch (i) {
     case SET_RESCAN: {
-        busy_frame("Looking for your games...");
-        scan_everything();
-        load_recent();
-        load_favs();
-        load_installed();
-        rebuild_tabs();
+        rescan_now("Looking for your games...");
         int total = 0;
         for (int s = 0; s < g_nsys; s++) total += g_sys[s].ngames;
         flash("Found %d games", total);
-        if (g_auto_covers) start_cover_helper();
         g_settings = 0;
         break;
     }
@@ -5991,20 +6177,23 @@ static void show_info(Game *g) {
         for (const char *p = g->grouped; *p && n < sizeof(extra);) {
             const char *e = strchr(p, '\n');
             int l = e ? (int)(e - p) : (int)strlen(p);
-            n += (size_t)snprintf(extra + n, sizeof(extra) - n, "  %.*s\n", l, p);
+            const char *bn = p;   /* just the file name */
+            for (const char *q = p; q < p + l; q++)
+                if (*q == '/') bn = q + 1;
+            n += (size_t)snprintf(extra + n, sizeof(extra) - n, "  %.*s\n", (int)(p + l - bn), bn);
             p += l + (e ? 1 : 0);
         }
         if (n < sizeof(extra)) {
             if (st == 3)
                 snprintf(extra + n, sizeof(extra) - n,
-                         "ProsperoEden finds these by what they hold and applies the newest update and\n"
-                         "all DLC every time the game starts. Nothing to install, one copy of each.\n");
+                         "Up to date: ProsperoEden applies the newest update and all DLC every time\n"
+                         "the game starts. Nothing more to do.\n");
             else if (st == 4)
                 snprintf(extra + n, sizeof(extra) - n,
-                         "ProsperoEden applies updates and DLC only from its own game files folder:\n"
-                         "  %s/<game>/\n"
-                         "Move this game and these files into a folder of their own there, then\n"
-                         "Rescan games. Nothing to install after that.\n", g_pe_roms[0] ? g_pe_roms : "<game files folder>/roms");
+                         "ProsperoEden doesn't see them where they are. Cross: Update moves them into\n"
+                         "  %s\n"
+                         "where it applies them every time the game starts (one copy, nothing to install).\n",
+                         g_pe_updates[0] ? g_pe_updates : "its updates folder");
             else if (st == 1)
                 snprintf(extra + n, sizeof(extra) - n,
                          "To install: in the emulator, use its install option and pick the file from\n"
@@ -6029,6 +6218,9 @@ static void show_info(Game *g) {
     if (st == 1 || st == 2) {   /* only where you install them yourself */
         g_modal_game = g;
         scopy(g_modal_action, sizeof(g_modal_action), inst_marked(g) ? "Mark not installed" : "Mark installed");
+    } else if (st == 4) {
+        g_modal_game = g;
+        scopy(g_modal_action, sizeof(g_modal_action), "Update");
     }
 }
 
@@ -6122,8 +6314,76 @@ static void select_game(int i) {
     }
 }
 
+/* Update (ProsperoEden): move the game's update and DLC files it can't see into its updates
+ * folder (jc-scan.elf moves them: a rename on the same drive, a copy across drives), then look
+ * at everything again, so the game shows as updated. */
+static void rescan_now(const char *msg);
+
+static void pe_update(Game *g) {
+    char title[160], list[sizeof(g->grouped)];
+    scopy(title, sizeof(title), g->title);
+    scopy(list, sizeof(list), g->grouped);
+    g_scan_moves[0] = 0;
+    int n = 0;
+    for (char *p = list; *p;) {
+        char *e = strchr(p, '\n');
+        if (e) *e = 0;
+        Game probe;
+        scopy(probe.path, sizeof(probe.path), p);
+        if (*p && !addon_applied(&probe)) {
+            const char *bn = strrchr(p, '/');
+            bn = bn ? bn + 1 : p;
+            /* name it after the game, with its title ID: hash-named files (and base games with no
+             * ticket to read a title ID from) still group with their game once moved */
+            char nice[400];
+            unsigned long long tid = 0;
+            char kind = 0, ver[16] = "";
+            if (sw_meta(p, &tid, &kind, ver, sizeof(ver)) && tid && (kind == 'U' || kind == 'D')) {
+                char t[200];
+                scopy(t, sizeof(t), title);
+                for (char *q = t; *q; q++)
+                    if (strchr("/\\:*?\"<>|", *q)) *q = ' ';
+                const char *ext = strrchr(bn, '.');
+                snprintf(nice, sizeof(nice), "%s %s [%016llX]%s%s%s%s", t, kind == 'U' ? "update" : "DLC", tid,
+                         ver[0] && strcmp(ver, "-") ? "[v" : "", ver[0] && strcmp(ver, "-") ? ver : "",
+                         ver[0] && strcmp(ver, "-") ? "]" : "", ext ? ext : ".nsp");
+                bn = nice;
+            }
+            char line[2400];
+            snprintf(line, sizeof(line), "V\t%s\t%s/%s\n", p, g_pe_updates, bn);
+            if (strlen(g_scan_moves) + strlen(line) < sizeof(g_scan_moves)) {
+                strcat(g_scan_moves, line);
+                n++;
+            }
+#ifndef GS_NATIVE
+            if (!g_use_scanner) {   /* the PC build: move it here */
+                char from[1300], to[1300], dir[1300];
+                real_path(p, from, sizeof(from));
+                snprintf(dir, sizeof(dir), "%s", g_pe_updates);
+                real_path(dir, to, sizeof(to));
+                mkdir(to, 0777);
+                snprintf(to + strlen(to), sizeof(to) - strlen(to), "/%s", bn);
+                if (rename(from, to) != 0) logf_("couldn't move %s", from);
+            }
+#endif
+        }
+        if (!e) break;
+        p = e + 1;
+    }
+    g_modal = 0;
+    if (!n) return;
+    char msg[240];
+    snprintf(msg, sizeof(msg), "Updating %.150s...", title);
+    rescan_now(msg);
+    flash("%s: moved %d file%s into ProsperoEden's updates folder", title, n, n == 1 ? "" : "s");
+}
+
 static void handle(int in, SDL_Window *win) {
     if (g_modal) {
+        if (in == IN_OK && g_modal_game && !strcmp(g_modal_action, "Update")) {
+            pe_update(g_modal_game);
+            return;
+        }
         if (in == IN_OK && g_modal_game) {
             Game *g = g_modal_game;
             inst_toggle(g);
@@ -6241,6 +6501,7 @@ static int scan_with_helper(SDL_Window *win) {
     (void)win;
     static char req[24000];
     snprintf(req, sizeof(req), "jewelcase-scan 1\n");
+    strncat(req, g_scan_moves, sizeof(req) - strlen(req) - 1);   /* moves first: then listed where they end up */
     strncat(req, g_scan_mkdirs, sizeof(req) - strlen(req) - 1);
     /* the drives themselves, to know which are plugged in */
     {
@@ -6302,8 +6563,14 @@ static int scan_with_helper(SDL_Window *win) {
         return -1;
     }
 #endif
-    /* the helper writes the index in a moment */
-    for (int tries = 0; tries < 150; tries++) {
+    /* the helper writes the index in a moment (much longer when it copies an update across drives) */
+    int limit = g_scan_moves[0] ? 6000 : 150;
+    for (int tries = 0; tries < limit; tries++) {
+        if (g_scan_moves[0] && tries % 5 == 4) {
+            char m[120];
+            snprintf(m, sizeof(m), "Moving the update into place... %d s", tries / 5);
+            busy_frame(m);
+        }
         char *txt = read_file("/data/jewelcase-index.txt", NULL);
         if (txt) {
             int n = ix_load(txt);

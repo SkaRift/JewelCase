@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Switch: update and DLC files with hash names no longer show as extra games; Jewel Case reads
+  the title ID inside each .nsp / .nsz and groups them with their game.
+- Switch with ProsperoEden: **Update** in File info moves a game's update and DLC into
+  ProsperoEden's updates folder; the game then shows **Updated** and isn't offered it again.
+
 ## 1.1
 
 - Cartridges, cards and discs rendered from 3D models; labels without box branding; discs

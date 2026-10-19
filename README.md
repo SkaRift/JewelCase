@@ -123,11 +123,15 @@ files beside it (any names).
 
 The game files folder is the one picked in ProsperoEden's **Settings → Game files**
 (`/data/prosperoeden` if you never picked one). Jewel Case reads that setting and lists the
-Switch games there too, so keep your Switch games in that one place: both apps use the same
-files, one copy of each. Everything in a game's folder shows as that one game, and the details
-screen says **Update 1.1, 1 DLC · applied when the game starts** in green. If the files are
-somewhere ProsperoEden doesn't look (such as `/data/roms/switch`), it says **not applied** in
-amber and tells you where to move them.
+Switch games there too. Everything in a game's folder shows as that one game.
+
+**Updates next to a game somewhere else** (such as `/data/roms/switch`) also show as part of
+that game, even with a hash for a name: Jewel Case reads the title ID inside each `.nsp` /
+`.nsz`. The game shows **Update available** in amber. Open its details (□), press □ again for
+**File info**, then **✕ Update**: Jewel Case moves the update and DLC into ProsperoEden's
+`updates` folder (renamed after the game, like `Super Mario Odyssey update [0100000000010800].nsp`),
+where ProsperoEden applies them every time the game starts. Still one copy of each file. The
+game then shows **Updated** in green, and Update isn't offered again.
 
 **Other emulators** (Wii U in Cemu, older ProsperoEden versions) need updates and DLC installed
 into their own storage once, from their own menu. Jewel Case starts games; it doesn't install
@@ -164,7 +168,7 @@ kept in `/data/jewelcase/installed.json`. Versions come from file names (`1.0`, 
 | L2 / R2 | jump 10 games | Triangle | favorite |
 | Cross | play | Square | technical info |
 | Triangle | favorite | Circle | back |
-| Square | details screen | Square | file info (and marking updates installed) |
+| Square | details screen | Square | file info (Update, or marking updates installed) |
 | Right stick | turn the game around | Right stick | turn the game around |
 | Options | settings | | |
 | Circle | close Jewel Case | | |
