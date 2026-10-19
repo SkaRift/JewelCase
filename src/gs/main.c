@@ -1638,7 +1638,7 @@ static void group_updates(System *s) {
         if (gkind(g) == 0) drop_version_words(g->title);
     }
     int n = s->ngames;
-    if (n < 2) return;
+    if (n < 1) return;   /* (a lone update still has to be hidden below) */
     int *owner = calloc((size_t)n, sizeof(int));
     if (!owner) return;
     for (int i = 0; i < n; i++) owner[i] = -1;
@@ -1708,6 +1708,12 @@ static void group_updates(System *s) {
         if (owner[i] < 0) {
             /* ProsperoEden's updates folder holds every game's: only show them with their game */
             if (lu && !strncmp(s->games[i].path, g_pe_updates, lu) && s->games[i].path[lu] == '/') continue;
+            /* so does a Switch updates (or DLC) folder of your own */
+            if (sw) {
+                const char *base = strrchr(s->games[i].dir, '/');
+                base = base ? base + 1 : s->games[i].dir;
+                if (!strcasecmp(base, "updates") || !strcasecmp(base, "update") || !strcasecmp(base, "dlc")) continue;
+            }
             if (w != i) s->games[w] = s->games[i];
             w++;
         }
@@ -1724,7 +1730,8 @@ static void scan_game_folders(System *s, int *cap, const char *dir, int files_to
         free(ents);
         return;
     }
-    static const char *const skip[] = {"media", "boxart", "images", "covers", "mods", "cheats", "reshade"};
+    /* firmware: the system's own .nca files, not a game */
+    static const char *const skip[] = {"media", "boxart", "images", "covers", "mods", "cheats", "reshade", "firmware"};
     for (int i = 0; i < n; i++) {
         if (ents[i].name[0] == '.') continue;
         if (!ents[i].dir) {
