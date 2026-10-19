@@ -12,6 +12,9 @@
 - Details screen: no version numbers. Without update files there's no version chip; with one
   the chip says **Update available** (yellow) or **Updated** (green). A file's title version
   (v327680) isn't the version the game shows.
+- A game turned round (right stick, on the shelf and the details screen) reflects its back on
+  the floor, not its front.
+- Music volume defaults to 40% (a saved 60%, the old default, moves to 40% once).
 - PS2 with PS5SX2: games start directly. jc-launch.elf writes the game into PS5SX2's
   `logs/disc-launch.txt` (its disc payload's request) before starting it; PS5SX2 takes no
   launch arguments. PS5SX2's own `games` folder is listed too (its disc copies).

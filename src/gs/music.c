@@ -40,7 +40,7 @@ int sceAudioOutClose(int32_t handle);
 static char g_tracks[MAX_TRACKS][1024];
 static int g_ntracks;
 static volatile int g_run;          /* 1 while the thread should play */
-static volatile int g_volume = 60;  /* percent */
+static volatile int g_volume = 40;  /* percent */
 static volatile float g_fade = 0;   /* 0..1, eases toward g_fade_to */
 static volatile float g_fade_to = 1;
 static pthread_t g_thread;

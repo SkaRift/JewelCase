@@ -592,6 +592,7 @@ typedef struct Game {
     /* carousel image: the game's cartridge / disc with its art, and its floor reflection */
     SDL_Texture *media, *refl;
     SDL_Texture *back;          /* its back, made when it's first turned around */
+    SDL_Texture *back_refl;     /* and the back's floor reflection */
     int media_w, media_h, refl_h;
     int media_pending;          /* built without art while its cover is downloading */
     int extra_pending;          /* disc: its logo / disc scan not looked for yet */
@@ -3562,7 +3563,8 @@ static void free_media(Game *g) {
     if (g->media) SDL_DestroyTexture(g->media);
     if (g->refl) SDL_DestroyTexture(g->refl);
     if (g->back) SDL_DestroyTexture(g->back);
-    g->media = g->refl = g->back = NULL;
+    if (g->back_refl) SDL_DestroyTexture(g->back_refl);
+    g->media = g->refl = g->back = g->back_refl = NULL;
     g->media_pending = g->extra_pending = 0;
 }
 
@@ -3793,6 +3795,8 @@ static void title_on_label(const char *title, int x, int y, int w, int h) {
 
 #define REFL_FRACTION 0.36f
 
+static SDL_Texture *refl_of_target(int w, int h, int *rh_out);
+
 static void build_media(Game *g) {
     System *s = &g_sys[g->sys];
     int ti = tpl_of(s);
@@ -3939,27 +3943,9 @@ static void build_media(Game *g) {
     if (scan) SDL_FreeSurface(scan);
 
     /* floor reflection: the bottom of the image, flipped and fading out */
-    int rh = (int)(t->h * REFL_FRACTION);
-    SDL_Surface *full = SDL_CreateRGBSurfaceWithFormat(0, t->w, t->h, 32, SDL_PIXELFORMAT_ARGB8888);
-    SDL_Surface *rs = SDL_CreateRGBSurfaceWithFormat(0, t->w, rh, 32, SDL_PIXELFORMAT_ARGB8888);
-    if (full && rs && SDL_RenderReadPixels(R, NULL, SDL_PIXELFORMAT_ARGB8888, full->pixels, full->pitch) == 0) {
-        for (int y = 0; y < rh; y++) {
-            const Uint32 *src = (const Uint32 *)((Uint8 *)full->pixels + (t->h - 1 - y) * full->pitch);
-            Uint32 *dst = (Uint32 *)((Uint8 *)rs->pixels + y * rs->pitch);
-            float f = 1.0f - (float)y / rh;
-            float k = 0.38f * f * f;
-            for (int x = 0; x < t->w; x++) {
-                Uint32 p = src[x];
-                Uint32 a = (Uint32)(((p >> 24) & 255) * k);
-                dst[x] = (a << 24) | (p & 0xffffff);
-            }
-        }
-        g->refl = SDL_CreateTextureFromSurface(R, rs);
-        if (g->refl) SDL_SetTextureBlendMode(g->refl, SDL_BLENDMODE_BLEND);
-        g->refl_h = rh;
-    }
-    if (full) SDL_FreeSurface(full);
-    if (rs) SDL_FreeSurface(rs);
+    int rh;
+    g->refl = refl_of_target(t->w, t->h, &rh);
+    if (g->refl) g->refl_h = rh;
 
     SDL_SetRenderTarget(R, NULL);
     g->media = tgt;
@@ -4002,6 +3988,34 @@ static Game *g_spin_game;       /* the game it applies to: another game starts f
 
 /* the back of a game's cartridge or disc: the template seen from behind; a disc
  * shows its shiny data side in its own colour */
+/* the floor reflection of the image in the render target (w x h): its bottom, flipped and
+ * fading out; NULL if it can't be read */
+static SDL_Texture *refl_of_target(int w, int h, int *rh_out) {
+    int rh = (int)(h * REFL_FRACTION);
+    SDL_Texture *out = NULL;
+    SDL_Surface *full = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
+    SDL_Surface *rs = SDL_CreateRGBSurfaceWithFormat(0, w, rh, 32, SDL_PIXELFORMAT_ARGB8888);
+    if (full && rs && SDL_RenderReadPixels(R, NULL, SDL_PIXELFORMAT_ARGB8888, full->pixels, full->pitch) == 0) {
+        for (int y = 0; y < rh; y++) {
+            const Uint32 *src = (const Uint32 *)((Uint8 *)full->pixels + (h - 1 - y) * full->pitch);
+            Uint32 *dst = (Uint32 *)((Uint8 *)rs->pixels + y * rs->pitch);
+            float f = 1.0f - (float)y / rh;
+            float k = 0.38f * f * f;
+            for (int x = 0; x < w; x++) {
+                Uint32 p = src[x];
+                Uint32 a = (Uint32)(((p >> 24) & 255) * k);
+                dst[x] = (a << 24) | (p & 0xffffff);
+            }
+        }
+        out = SDL_CreateTextureFromSurface(R, rs);
+        if (out) SDL_SetTextureBlendMode(out, SDL_BLENDMODE_BLEND);
+    }
+    if (full) SDL_FreeSurface(full);
+    if (rs) SDL_FreeSurface(rs);
+    *rh_out = rh;
+    return out;
+}
+
 static void make_back(Game *g) {
     int ti = tpl_of(&g_sys[g->sys]);
     const MediaTpl *t = &MEDIA_TPL[ti];
@@ -4105,6 +4119,10 @@ static void make_back(Game *g) {
             }
         }
     }
+    /* its own reflection, so a turned game reflects the side you see */
+    int brh;
+    if (g->back_refl) SDL_DestroyTexture(g->back_refl);
+    g->back_refl = refl_of_target(t->w, t->h, &brh);
     SDL_SetRenderTarget(R, prev);
     g->back = tgt;
 }
@@ -4161,10 +4179,11 @@ static void draw_spun(Game *g, float cx, float cy, float w, float h, float deg, 
     int front = ca >= 0;
     if (!front && !g->back) make_back(g);
     SDL_Texture *face = front ? g->media : (g->back ? g->back : g->media);
-    /* reflection: the face toward you, fading as it turns edge-on */
-    if (g->refl && (g_spin_parts & 1)) {
+    /* reflection: of the face toward you, fading as it turns edge-on */
+    SDL_Texture *refl = front || !g->back_refl ? g->refl : g->back_refl;
+    if (refl && (g_spin_parts & 1)) {
         Uint8 ra = (Uint8)(alpha * (0.25f + 0.75f * SDL_fabsf(ca)));
-        draw_spun_face(g->refl, !front, cx, rt + rh / 2, w, rh, ca, sa, 0, bright, bright, bright, ra, 2);
+        draw_spun_face(refl, !front, cx, rt + rh / 2, w, rh, ca, sa, 0, bright, bright, bright, ra, 2);
     }
     /* thickness: cartridges and cards are chunky, discs thin */
     if (!(g_spin_parts & 2)) return;
@@ -5423,7 +5442,7 @@ static void draw_settings(void);
 static int g_rain_on = 1;
 static int g_sfx_enabled = 1;   /* menu sounds */
 static int g_music_on = 1;
-static int g_music_volume = 60;
+static int g_music_volume = 40;
 #define RAIN_FAR 130
 #define RAIN_NEAR 60
 #define RIPPLES 40
@@ -5700,11 +5719,11 @@ static int drive_present(int i) {
 enum { SET_RESCAN, SET_ROMDIR, SET_FOLDERS, SET_MISSING, SET_REDOWNLOAD, SET_AUTO, SET_MUSIC, SET_VOLUME, SET_SOUNDS, SET_RAIN, SET_EMPTY, SET_CLEAR_RECENT, SET_EMULATORS, SET_CREDITS, SET_ABOUT, SET_COUNT };
 
 static void save_ui_settings(void) {
-    char path[600], out[400];
+    char path[600], out[600];
     snprintf(path, sizeof(path), "%s", USER_DIR "/ui-settings.json");
     snprintf(out, sizeof(out),
              "{\n  \"showEmptySystems\": %s,\n  \"autoCovers\": %s,\n  \"music\": %s,\n"
-             "  \"musicVolume\": %d,\n  \"rain\": %s,\n  \"menuSounds\": %s,\n  \"romFolder\": \"%s\"\n}\n",
+             "  \"musicVolume\": %d,\n  \"volumeDefault\": 40,\n  \"rain\": %s,\n  \"menuSounds\": %s,\n  \"romFolder\": \"%s\"\n}\n",
              g_hide_empty ? "false" : "true", g_auto_covers ? "true" : "false", g_music_on ? "true" : "false",
              g_music_volume, g_rain_on ? "true" : "false", g_sfx_enabled ? "true" : "false", g_rom_folder);
     write_file(path, out);
@@ -5725,6 +5744,8 @@ static void load_ui_settings(void) {
     if (cJSON_IsBool(v)) g_music_on = cJSON_IsTrue(v);
     v = cJSON_GetObjectItem(o, "musicVolume");
     if (cJSON_IsNumber(v)) g_music_volume = SDL_max(0, SDL_min(100, v->valueint));
+    /* saved before the default became 40: the old default (60) moves to the new one, once */
+    if (cJSON_IsNumber(v) && v->valueint == 60 && !cJSON_GetObjectItem(o, "volumeDefault")) g_music_volume = 40;
     v = cJSON_GetObjectItem(o, "rain");
     if (cJSON_IsBool(v)) g_rain_on = cJSON_IsTrue(v);
     v = cJSON_GetObjectItem(o, "menuSounds");
