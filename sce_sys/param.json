@@ -10,7 +10,7 @@
   "conceptId": "75837",
   "contentBadgeType": 1,
   "contentId": "UP9000-PPSA75837_00-JEWELCASE0000001",
-  "contentVersion": "01.100.000",
+  "contentVersion": "01.110.000",
   "downloadDataSize": 256,
   "gameIntent": {
     "permittedIntents": [
@@ -28,7 +28,7 @@
       "titleName": "Jewel Case"
     }
   },
-  "masterVersion": "01.10",
+  "masterVersion": "01.11",
   "pubtools": {
     "creationDate": "2026-08-22 00:00:00",
     "loudnessSnd0": "-28.00",

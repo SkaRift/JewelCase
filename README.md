@@ -46,8 +46,7 @@
   file, region and size.
 - **Updates and DLC** sit with their game instead of showing as extra games. With ProsperoEden,
   Switch updates and DLC just work from one folder; for other emulators an amber or green chip
-  shows whether they're installed yet ([how it works](#updates-and-dlc)). The game's version
-  comes from its file name.
+  shows whether they're installed yet ([how it works](#updates-and-dlc)).
 - **Feels like a console menu.** Soft rain sounds (your own MP3s instead, if you add some), a
   low retro boop as you move between games, and a rain effect; each can be turned off. Starting
   a game sends it off the screen: discs spin up, cartridges turn, and both fly away.
@@ -64,7 +63,7 @@
 
 | System | Emulator used (first one found) |
 |---|---|
-| PlayStation | PSXS5, then RetroArch (SwanStation, PCSX ReARMed, Beetle PSX) |
+| PlayStation | SwanStationPS5, then PSXS5, then RetroArch (SwanStation, PCSX ReARMed, Beetle PSX) |
 | PlayStation 2 | PS5SX2, then RetroArch (LRPS2) |
 | Nintendo 64 | Mupen64Plus PS5, then RetroArch (Mupen64Plus-Next, ParaLLEl) |
 | GameCube / Wii | Porpoise, then RetroArch (Dolphin) |
@@ -99,6 +98,10 @@ drive):
 `/data/roms` listing each folder and the file types it takes. After adding games, use
 **Settings → Rescan games**.
 
+Games in your emulators' own folders are listed too: PS1 games in SwanStationPS5's and PSXS5's
+`games` folders (`/data/SwanStationPS5/games`, `/data/PSXS5/games`, or a `SwanStationPS5` /
+`PSXS5` folder on a drive), and PS2 games in PS5SX2's `/data/PCSX2/games`.
+
 No-Intro / Redump style file names, such as `Super Mario World (USA).sfc`, match covers
 best. To use your own art, put a `.png` or `.jpg` named like the game next to its file, or
 in a `covers` folder there.
@@ -123,15 +126,18 @@ files beside it (any names).
 
 The game files folder is the one picked in ProsperoEden's **Settings → Game files**
 (`/data/prosperoeden` if you never picked one). Jewel Case reads that setting and lists the
-Switch games there too. Everything in a game's folder shows as that one game.
+Switch games there too. Everything in a game's folder shows as that one game. A `firmware`
+folder in a Switch games folder is skipped.
 
 **Updates next to a game somewhere else** (such as `/data/roms/switch`) also show as part of
 that game, even with a hash for a name: Jewel Case reads the title ID inside each `.nsp` /
 `.nsz`. The game shows **Update available** in amber. Open its details (□), press □ again for
 **File info**, then **✕ Update**: Jewel Case moves the update and DLC into ProsperoEden's
-`updates` folder (renamed after the game, like `Super Mario Odyssey update [0100000000010800].nsp`),
+`updates` folder (renamed after the game, like `Super Mario Odyssey update [0100000000010800][v327680].nsp`),
 where ProsperoEden applies them every time the game starts. Still one copy of each file. The
-game then shows **Updated** in green, and Update isn't offered again.
+game then shows **Updated** in green, and Update isn't offered again. A game with no update
+files shows no update chip. An update in an `updates`, `update` or `dlc` folder of your own
+shows only with its game.
 
 **Other emulators** (Wii U in Cemu, older ProsperoEden versions) need updates and DLC installed
 into their own storage once, from their own menu. Jewel Case starts games; it doesn't install
@@ -156,8 +162,8 @@ install one, with no extra copies:
 Amber **not installed** means the file is there but not marked yet; green **installed** means
 you've marked it. A newer update file turns it amber again. Jewel Case can't look inside the
 emulator, so "installed" is whatever you marked; **✕ Mark not installed** undoes it. Marks are
-kept in `/data/jewelcase/installed.json`. Versions come from file names (`1.0`, `v1.2.0`,
-`[v131072]`) and show on the details screen for any system.
+kept in `/data/jewelcase/installed.json`. The update's version in that chip comes from its
+file name (`1.0`, `v1.2.0`, `[v131072]`).
 
 ## Controls
 
@@ -184,7 +190,11 @@ make host     # PC test build, needs SDL2 (build-host/jewelcase --fsroot <folder
 
 ## Known limitations
 
-- PSXS5 and PS5SX2 don't accept a game at launch yet, so they open their own game list.
+- PSXS5 doesn't accept a game at launch, so it opens its own game list. SwanStationPS5 starts
+  PS1 games directly, but only games in its own folders (see [Adding games](#adding-games));
+  for others it opens its game list.
+- PS2 games start directly in PS5SX2 through the request file its own disc feature uses
+  (`/data/PCSX2/logs/disc-launch.txt`). If PS5SX2 changes that, it opens its game list instead.
 - Cover matching works from file names, so heavily renamed files may get no cover. Add your
   own art for those.
 - Jewel Case can't install updates or DLC into an emulator, or check what the emulator has

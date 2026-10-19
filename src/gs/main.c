@@ -72,7 +72,7 @@ void music_stop(void);
 int music_playing(void);
 const char *music_now(void);
 
-#define GS_VERSION "1.1"
+#define GS_VERSION "1.1.1"
 #define GS_TITLE_ID "PPSA75837"
 
 #ifdef GS_NATIVE

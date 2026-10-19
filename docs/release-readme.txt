@@ -1,4 +1,4 @@
-JEWEL CASE v1.1 - by SkaRift
+JEWEL CASE v1.1.1 - by SkaRift
 A home-screen ROM launcher for jailbroken PS5 consoles
 =====================================================================
 
@@ -17,7 +17,8 @@ WHAT YOU NEED
 - At least one emulator. Standalone emulator apps are used first, and
   RetroArch (PPSA99169) is used for any system that doesn't have one.
   Supported apps:
-    PSXS5 (PS1)              PS5SX2 (PS2)          Mupen64Plus PS5 (N64)
+    SwanStationPS5 (PS1)     PSXS5 (PS1)           PS5SX2 (PS2)
+    Mupen64Plus PS5 (N64)
     PSFlycast (Dreamcast)    Porpoise (GC / Wii)   PS5CEMU-HAR (DS/3DS/Wii U)
     ProsperoEden (Switch)    XPSemu (Xbox)         PS5X360 (Xbox 360)
     RetroArch with its cores (everything else, and a fallback)
@@ -54,6 +55,10 @@ Folder names: nes snes n64 gb gbc gba nds 3ds genesis sms gg pce psx psp
 ps2 ps3 gc wii wiiu dc saturn segacd 32x switch xbox xbox360 arcade, and
 more (see the guide).
 
+Games in your emulators' own folders are listed too: PS1 games in
+/data/SwanStationPS5/games, /data/PSXS5/games (or a SwanStationPS5 or
+PSXS5 folder on a drive), and PS2 games in /data/PCSX2/games.
+
 After adding games, use Settings > Rescan games (or restart Jewel Case).
 
 
@@ -72,7 +77,8 @@ its own in its roms folder, the update and DLC files beside it (any names):
 The game files folder is the one picked in ProsperoEden's Settings > Game
 files (/data/prosperoeden if you never picked one). Jewel Case reads that
 setting and lists the Switch games there too. Everything in a game's
-folder is shown as that one game.
+folder is shown as that one game. A "firmware" folder in a Switch games
+folder is skipped.
 
 Update files next to a game anywhere else (such as /data/roms/switch) are
 shown as part of that game too, even with a hash for a name: Jewel Case
@@ -84,6 +90,9 @@ The details screen says:
         ProsperoEden's updates folder (named after the game), where it's
         applied every time the game starts. Still one copy.
   green "Updated"   all set; nothing more to do.
+  (no chip)         the game has no update files.
+An update in an "updates", "update" or "dlc" folder of your own is shown
+only with its game.
 
 Other emulators (Wii U in Cemu, older ProsperoEden): Jewel Case starts
 games; it doesn't install anything into an emulator. Keep the update and
@@ -109,8 +118,8 @@ turns it amber again. Jewel Case can't see inside the emulator, so
 "installed" means you marked it; Cross: Mark not installed undoes it. The
 marks are kept in /data/jewelcase/installed.json.
 
-Versions come from file names ("1.0", "v1.2.0", "[v131072]") and show on
-the details screen for any system.
+The update's version in that chip comes from its file name ("1.0",
+"v1.2.0", "[v131072]").
 
 
 COVERS
@@ -206,9 +215,15 @@ TROUBLESHOOTING
   the run before), and covers/lb-stage.txt what Jewel Case did with its
   LaunchBox data. Settings > Download missing covers looks again for
   everything not found before.
-- The PS1 emulator (PSXS5) and PS2 emulator (PS5SX2) open their own game
-  list instead of starting the game directly: they don't accept a game at
-  launch yet. Pick the game again there.
+- PSXS5 (PS1) opens its own game list instead of starting the game: it
+  doesn't accept a game at launch. SwanStationPS5 starts PS1 games
+  directly, but only games in its own folders (see ADDING GAMES); for
+  others it opens its game list too.
+- PS2 games start directly in PS5SX2, through the request file its own
+  disc feature reads (/data/PCSX2/logs/disc-launch.txt). If PS5SX2 opens
+  its game list instead, a newer PS5SX2 may have changed that. If PS5SX2
+  itself stays on a black screen, check that its PS5SX2 Helper payload is
+  loaded: that's PS5SX2's own start-up, not Jewel Case.
 
 
 FILES JEWEL CASE KEEPS

@@ -1,30 +1,29 @@
 # Changelog
 
-## Unreleased
+## 1.1.1
 
+- PS2 games start directly in PS5SX2 (Jewel Case hands it the game through the request file
+  its own disc feature reads, `/data/PCSX2/logs/disc-launch.txt`). PS5SX2's own `games` folder
+  is listed too.
+- PS1: SwanStationPS5 (darkxex's PSXS5 fork) is supported and preferred over PSXS5. It starts
+  games directly when they're in its own folders, which Jewel Case now lists too
+  (`/data/SwanStationPS5/games`, `/data/PSXS5/games`, `SwanStationPS5` / `PSXS5` folders on
+  drives). PSXS5 still opens its own game list.
 - Switch: update and DLC files with hash names no longer show as extra games; Jewel Case reads
   the title ID inside each .nsp / .nsz and groups them with their game.
 - Switch with ProsperoEden: **Update** in File info moves a game's update and DLC into
-  ProsperoEden's updates folder; the game then shows **Updated** and isn't offered it again.
-- Switch: a `firmware` folder in the Switch games folder is skipped (its .nca files showed as a
-  game), and an update or DLC in an `updates`, `update` or `dlc` folder of your own shows only
-  with its game, like ProsperoEden's updates folder.
-- Details screen: no version numbers. Without update files there's no version chip; with one
-  the chip says **Update available** (yellow) or **Updated** (green). A file's title version
-  (v327680) isn't the version the game shows.
-- A game turned round (right stick, on the shelf and the details screen) reflects its back on
-  the floor, not its front.
+  ProsperoEden's updates folder; the game then shows **Updated**.
+- Switch: a `firmware` folder is skipped (its .nca files showed as a game), and an update or
+  DLC in an `updates`, `update` or `dlc` folder of your own shows only with its game.
+- Details screen: no version chip. A game with update files shows **Update available**
+  (amber) or **Updated** (green); one without shows nothing.
+- A game turned round with the right stick reflects its back on the floor, not its front (on
+  the shelf and the details screen).
 - Music volume defaults to 40% (a saved 60%, the old default, moves to 40% once).
-- PS2 with PS5SX2: games start directly. jc-launch.elf writes the game into PS5SX2's
-  `logs/disc-launch.txt` (its disc payload's request) before starting it; PS5SX2 takes no
-  launch arguments. PS5SX2's own `games` folder is listed too (its disc copies).
-- PS1 with SwanStationPS5 (darkxex's PSXS5 fork): games start directly (`--rom`), and it's
-  preferred over PSXS5 when installed. It starts only games in its own folders
-  (`/data/PSXS5/games`, `/data/SwanStationPS5/games`, `PSXS5` / `SwanStationPS5` folders on
-  drives), so Jewel Case lists those too, and File info says so for a game elsewhere.
-- PSXS5 still only opens (it takes no launch arguments).
-- Custom installed-app emulators in `jewelcase.json` can name a request file to write first
-  (`requestFile`, `requestLine`).
+- Custom installed-app emulators in `jewelcase.json` can name a request file to write before
+  starting (`requestFile`, `requestLine`).
+
+See [docs/RELEASE_NOTES_v1.1.1.md](docs/RELEASE_NOTES_v1.1.1.md).
 
 ## 1.1
 
