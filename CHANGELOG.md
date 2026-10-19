@@ -9,6 +9,12 @@
 - Switch: a `firmware` folder in the Switch games folder is skipped (its .nca files showed as a
   game), and an update or DLC in an `updates`, `update` or `dlc` folder of your own shows only
   with its game, like ProsperoEden's updates folder.
+- Switch versions as the console shows them: the details screen says **Updated to Version
+  1.4.0** (or **Update available: Version 1.4.0**) and drops the game's own Version chip once
+  it's updated. The version is read from the update's control data with ProsperoEden's keys
+  (`<game files folder>/keys/prod.keys`, and `title.keys`; Jewel Case ships none), else from a
+  dotted version in the file name, else shown as which update it is ("update 5"). Update moves
+  add it to the file name too. A game's own chip shows its version the same way (1.0.0, not v0).
 - PS2 with PS5SX2: games start directly. jc-launch.elf writes the game into PS5SX2's
   `logs/disc-launch.txt` (its disc payload's request) before starting it; PS5SX2 takes no
   launch arguments. PS5SX2's own `games` folder is listed too (its disc copies).

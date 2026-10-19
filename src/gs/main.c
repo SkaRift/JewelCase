@@ -57,6 +57,7 @@ void gs_free(void *p);
 #include "logo.h"
 #include "media.h"
 #include "splash.h"
+#include "../../helper/nx_version.h"   /* a Switch file's display version (PC build) */
 
 /* everything below allocates through alloc.c */
 #define malloc(n) gs_malloc(n)
@@ -430,6 +431,7 @@ typedef struct {
     unsigned long long tid;
     char kind;
     char ver[16];
+    char dver[24];      /* the version it shows ("1.4.0"), from its control data; "" unknown */
 } SwMeta;
 static SwMeta *g_sw;
 static int g_nsw;
@@ -479,11 +481,15 @@ static int ix_load(char *buf) {
                 }
             }
             if (!ok) continue;
+            /* then its display version, from a scanner that reads it */
+            char *dv = strchr(f[3], '\t');
+            if (dv) *dv++ = 0;
             SwMeta *m = &g_sw[g_nsw++];
             m->path = f[0];
             m->tid = strtoull(f[1], NULL, 16);
             m->kind = f[2][0];
             snprintf(m->ver, sizeof(m->ver), "%s", strcmp(f[3], "-") ? f[3] : "");
+            snprintf(m->dver, sizeof(m->dver), "%s", dv && strcmp(dv, "-") ? dv : "");
         } else if (ln[0] == 'P' && ln[1] == '\t') {
             snprintf(g_pe_base, sizeof(g_pe_base), "%s", ln + 2);
         }
@@ -606,6 +612,9 @@ typedef struct Game {
     unsigned long long tid;     /* Switch: the title ID the file holds, 0 unknown */
     char mkind;                 /* Switch: what the file holds: 'G', 'U', 'D', 0 unknown */
     char mver[16];              /* Switch: its version number, from the file, "" unknown */
+    char dver[24];              /* Switch: the version it shows ("1.4.0"), from its control data */
+    char upd_label[48];         /* the newest update, as shown: "Version 1.4.0", "update 5", or "" */
+    unsigned long long upd_num; /* its title version (v327680), 0 unknown */
     char in_pe;                 /* in ProsperoEden's game files folder, where it applies updates */
     char own_dir;               /* in a folder of its own (with its update and DLC) */
 } Game;
@@ -664,7 +673,32 @@ static void pe_from_index(void) {
     snprintf(g_pe_updates, sizeof(g_pe_updates), "%s/updates", g_pe_base);
 }
 /* what a Switch .nsp holds (see jc-scan.c): 0 = couldn't tell */
-static int nsp_read(const char *path, unsigned long long *tid, char *kind, char *ver, size_t vcap) {
+/* ProsperoEden's keys, for the PC build (jc-scan.elf reads them on the console): NULL without */
+static const NxKeys *host_keys(void) {
+    static NxKeys keys;
+    static int tried, ok;
+    if (!tried) {
+        tried = 1;
+        char base[320];
+        if (g_pe_base[0]) scopy(base, sizeof(base), g_pe_base);
+        else {
+            scopy(base, sizeof(base), g_pe_roms);
+            size_t l = strlen(base);
+            if (l > 5 && !strcmp(base + l - 5, "/roms")) base[l - 5] = 0;
+        }
+        char p[400], t[400], rp[1100], rt[1100];
+        snprintf(p, sizeof(p), "%s/keys/prod.keys", base);
+        snprintf(t, sizeof(t), "%s/keys/title.keys", base);
+        real_path(p, rp, sizeof(rp));
+        real_path(t, rt, sizeof(rt));
+        ok = nx_keys_load(&keys, rp, rt);
+    }
+    return ok ? &keys : NULL;
+}
+
+static int nsp_read(const char *path, unsigned long long *tid, char *kind, char *ver, size_t vcap, char *dver,
+                    size_t dcap) {
+    dver[0] = 0;
     char rp[1100];
     real_path(path, rp, sizeof(rp));
     FILE *f = fopen(rp, "rb");
@@ -713,25 +747,31 @@ static int nsp_read(const char *path, unsigned long long *tid, char *kind, char 
             }
         }
     }
-    fclose(f);
-    if (!*tid) return 0;
+    if (!*tid) {
+        fclose(f);
+        return 0;
+    }
     if (!*kind) *kind = (*tid & 0xfff) == 0x800 ? 'U' : (*tid & 0xfff) ? 'D' : 'G';
+    if (*kind != 'D' && nx_nsp_version(f, host_keys(), dver, dcap)) dver[0] = 0;
+    fclose(f);
     return 1;
 }
 
 /* the facts for one file: from the index on the console, else read here */
-static int sw_meta(const char *path, unsigned long long *tid, char *kind, char *ver, size_t vcap) {
+static int sw_meta(const char *path, unsigned long long *tid, char *kind, char *ver, size_t vcap, char *dver,
+                   size_t dcap) {
     if (g_ix_on) {
         for (int i = 0; i < g_nsw; i++)
             if (!strcmp(g_sw[i].path, path)) {
                 *tid = g_sw[i].tid;
                 *kind = g_sw[i].kind;
                 snprintf(ver, vcap, "%s", g_sw[i].ver);
+                snprintf(dver, dcap, "%s", g_sw[i].dver);
                 return 1;
             }
         return 0;
     }
-    return nsp_read(path, tid, kind, ver, vcap);
+    return nsp_read(path, tid, kind, ver, vcap, dver, dcap);
 }
 
 static int g_hide_empty = 1;
@@ -1605,6 +1645,36 @@ static int addon_applied(const Game *u) {
     return 0;
 }
 
+/* an update's title version (v327680): from the file, else from its name ("[v327680]"); 0 unknown */
+static unsigned long long title_num(const Game *u) {
+    if (u->mver[0]) return strtoull(u->mver, NULL, 10);
+    const char *v = u->ver + (u->ver[0] == 'v' || u->ver[0] == 'V');
+    if (*v && !strchr(v, '.')) {
+        char *e;
+        unsigned long long n = strtoull(v, &e, 10);
+        if (!*e) return n;
+    }
+    return 0;
+}
+
+/* how an update's version is shown: the version it shows (its control data), else a dotted
+ * version from its name, else which update it is (title versions count 65536 a release) */
+static void upd_label_of(const Game *u, char *out, size_t cap) {
+    out[0] = 0;
+    if (u->dver[0]) {
+        snprintf(out, cap, "Version %s", u->dver);
+        return;
+    }
+    const char *v = u->ver + ((u->ver[0] == 'v' || u->ver[0] == 'V') && strchr(u->ver, '.'));
+    if (strchr(v, '.')) {
+        snprintf(out, cap, "Version %s", v);
+        return;
+    }
+    unsigned long long n = title_num(u);
+    if (n >= 65536) snprintf(out, cap, "update %llu", n >> 16);
+    else if (u->ver[0]) snprintf(out, cap, "Version %s", u->ver);
+}
+
 static void add_grouped(Game *b, const Game *u, int kind) {
     if (strlen(b->grouped) + strlen(u->path) + 2 < sizeof(b->grouped)) {
         strcat(b->grouped, u->path);
@@ -1616,8 +1686,16 @@ static void add_grouped(Game *b, const Game *u, int kind) {
     else if (u->mver[0] && strcmp(u->mver, "0")) snprintf(v, sizeof(v), "v%s", u->mver);
     if (kind == 1) {
         b->nupd++;
-        if (!b->upd[0] || !strcmp(b->upd, "yes") || (v[0] && version_newer(v, b->upd)))
+        unsigned long long un = title_num(u);
+        int newer;
+        if (!b->upd[0] || !strcmp(b->upd, "yes")) newer = 1;
+        else if (un && b->upd_num) newer = un > b->upd_num;   /* title versions: always comparable */
+        else newer = v[0] && version_newer(v, b->upd);
+        if (newer) {
             scopy(b->upd, sizeof(b->upd), v[0] ? v : "yes");
+            b->upd_num = un;
+            upd_label_of(u, b->upd_label, sizeof(b->upd_label));
+        }
     } else if (kind == 2) {
         b->ndlc++;
     } else {
@@ -1633,7 +1711,7 @@ static void group_updates(System *s) {
     int sw = !strcmp(s->id, "switch");
     for (int i = 0; i < s->ngames; i++) {
         Game *g = &s->games[i];
-        if (sw) sw_meta(g->path, &g->tid, &g->mkind, g->mver, sizeof(g->mver));
+        if (sw) sw_meta(g->path, &g->tid, &g->mkind, g->mver, sizeof(g->mver), g->dver, sizeof(g->dver));
         name_version(g->stem, g->ver, sizeof(g->ver));
         if (gkind(g) == 0) drop_version_words(g->title);
     }
@@ -2047,10 +2125,14 @@ static int upd_state(const Game *g, char *text, size_t cap) {
     if (uses_pe(g) && (g->nupd || g->ndlc || g->nother)) {
         /* ProsperoEden applies them by itself, once they're where it looks */
         int done = g->nunapplied == 0, n = 0;
-        int ver = g->nupd && strcmp(g->upd, "yes");
-        if (g->nupd)
-            n += snprintf(text + n, cap - n, done ? (ver ? "Updated to %s" : "Updated%s") : (ver ? "Update %s available" : "Update available%s"),
-                          ver ? g->upd : "");
+        if (g->nupd) {
+            /* "Updated to Version 1.4.0", "Update available: Version 1.4.0", "Updated (update 5)" */
+            const char *l = g->upd_label;
+            int full = !strncmp(l, "Version ", 8);
+            if (!l[0]) n += snprintf(text + n, cap - n, done ? "Updated" : "Update available");
+            else if (done) n += snprintf(text + n, cap - n, full ? "Updated to %s" : "Updated (%s)", l);
+            else n += snprintf(text + n, cap - n, full ? "Update available: %s" : "Update available (%s)", l);
+        }
         if (g->ndlc && n < (int)cap) n += snprintf(text + n, cap - n, "%s%d DLC%s", n ? "  \xc2\xb7  " : "", g->ndlc, done || g->nupd ? "" : " available");
         if (g->nother && n < (int)cap)
             snprintf(text + n, cap - n, "%s%d more file%s", n ? "  \xc2\xb7  " : "", g->nother, g->nother == 1 ? "" : "s");
@@ -5133,8 +5215,10 @@ static void draw_details(Uint32 accent) {
     snprintf(cnt, sizeof(cnt), "%d of %d", g_sel_game + 1, entry_count());
     /* its version, and any update / DLC files grouped under it */
     char ver[64] = "", upd[160];
-    if (g->ver[0]) snprintf(ver, sizeof(ver), "Version %s", g->ver);
+    if (g->dver[0]) snprintf(ver, sizeof(ver), "Version %s", g->dver);   /* what the game shows */
+    else if (g->ver[0]) snprintf(ver, sizeof(ver), "Version %s", g->ver);
     int ust = upd_state(g, upd, sizeof(upd));
+    if (g->nupd && (ust == 2 || ust == 3)) ver[0] = 0;   /* updated: the update chip says the version */
     int cx = x, cyy = y + 23;
     struct { int icon; const char *t; } chips[] = {
         {ICON_CLOCK, ago}, {ICON_CHIP, emu}, {ICON_STACK, cnt}, {ICON_CARD, ver}, {ICON_DOWNLOAD, ust ? upd : ""}};
@@ -6442,16 +6526,19 @@ static void pe_update(Game *g) {
              * ticket to read a title ID from) still group with their game once moved */
             char nice[400];
             unsigned long long tid = 0;
-            char kind = 0, ver[16] = "";
-            if (sw_meta(p, &tid, &kind, ver, sizeof(ver)) && tid && (kind == 'U' || kind == 'D')) {
+            char kind = 0, ver[16] = "", dver[24] = "";
+            if (sw_meta(p, &tid, &kind, ver, sizeof(ver), dver, sizeof(dver)) && tid && (kind == 'U' || kind == 'D')) {
                 char t[200];
                 scopy(t, sizeof(t), title);
                 for (char *q = t; *q; q++)
                     if (strchr("/\\:*?\"<>|", *q)) *q = ' ';
                 const char *ext = strrchr(bn, '.');
-                snprintf(nice, sizeof(nice), "%s %s [%016llX]%s%s%s%s", t, kind == 'U' ? "update" : "DLC", tid,
+                /* the version it shows goes last, so the name still says it without keys */
+                char dv[32] = "";
+                if (dver[0] && !strpbrk(dver, "/\\:*?\"<>|[]")) snprintf(dv, sizeof(dv), "[%s]", dver);
+                snprintf(nice, sizeof(nice), "%s %s [%016llX]%s%s%s%s%s", t, kind == 'U' ? "update" : "DLC", tid,
                          ver[0] && strcmp(ver, "-") ? "[v" : "", ver[0] && strcmp(ver, "-") ? ver : "",
-                         ver[0] && strcmp(ver, "-") ? "]" : "", ext ? ext : ".nsp");
+                         ver[0] && strcmp(ver, "-") ? "]" : "", dv, ext ? ext : ".nsp");
                 bn = nice;
             }
             char line[2400];
